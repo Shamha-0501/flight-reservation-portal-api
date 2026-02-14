@@ -1,0 +1,8 @@
+bootstrap/cache/*.php
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+node_modules
+vendor
+.git

@@ -1,0 +1,74 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - appnet
+    volumes:
+      # Persist user uploads + cache (recommended)
+      - app-storage:/var/www/html/storage
+
+  nginx:
+    image: nginx:alpine
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+    volumes:
+      - ./:/var/www/html:ro
+      - app-storage:/var/www/html/storage
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - appnet
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    env_file:
+      - .env
+    depends_on:
+      - mysql
+      - redis
+    command: php artisan queue:work --sleep=1 --tries=3 --timeout=90
+    networks:
+      - appnet
+    volumes:
+      - app-storage:/var/www/html/storage
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - appnet
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-p${DB_PASSWORD}"]
+      retries: 5
+      timeout: 5s
+
+  redis:
+    image: redis:alpine
+    volumes:
+      - redis-data:/data
+    networks:
+      - appnet
+
+networks:
+  appnet:
+
+volumes:
+  mysql-data:
+  redis-data:
+  app-storage:
