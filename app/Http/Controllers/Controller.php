@@ -32,12 +32,8 @@ abstract class Controller
         $children = 0,
         $infants = 0,
         $travelClass = null,
-        // $nonStop = false,
-        // $currencyCode = 'USD',
-        // $maxPrice = 500,
-        // $includedAirlineCodes = null,
-        // $excludedAirlineCodes = null,
-        // $includedCheckedBagsOnly = true,
+        $maxPrice = null,
+        $includedAirlineCodes = null
     ) {
         try {
             $departureDate = Carbon::parse($departureDate)->format('Y-m-d');
@@ -47,27 +43,33 @@ abstract class Controller
                 'originLocationCode' => strtoupper($origin),
                 'destinationLocationCode' => strtoupper($destination),
                 'departureDate' => $departureDate,
-                'adults' => (int) $adults,
-                'max' => 1,
-
-                // 'nonStop' => $nonStop,
-                // 'currencyCode' => $currencyCode,
-                // 'maxPrice' => $maxPrice,
-                // 'includedAirlineCodes' => $includedAirlineCodes,   // don't combine with excludedAirlineCodes
-                // // 'excludedAirlineCodes' => $excludedAirlineCodes,
-                // 'includedCheckedBagsOnly' => $includedCheckedBagsOnly,
+                'adults' => (int)$adults,
+                'max' => 150,
             ];
 
             if ($returnDate) $params['returnDate'] = $returnDate;
-            if ($children) $params['children'] = (int) $children;
-            if ($infants) $params['infants'] = (int) $infants;
-            if ($travelClass) $params['travelClass'] = $travelClass; // must be ECONOMY / BUSINESS etc.
+            if ($children) $params['children'] = (int)$children;
+            if ($infants) $params['infants'] = (int)$infants;
+            if ($travelClass) $params['travelClass'] = $travelClass;
+
+            // keep optional server-side filters (but don't over-restrict)
+            if ($maxPrice !== null) $params['maxPrice'] = (float)$maxPrice;
+            if (!empty($includedAirlineCodes)) {
+                $params['includedAirlineCodes'] = implode(',', array_map('strtoupper', $includedAirlineCodes));
+            }
 
             $response = $this->amadeus->getShopping()->getFlightOffers()->get($params);
 
-            $fullArray = json_decode($response[0]->getResponse()->getBody(), true);
+            // SDK may return object OR array
+            if (is_array($response)) {
+                if (!isset($response[0])) return ['data' => [], 'dictionaries' => []];
+                $body = $response[0]->getResponse()->getBody();
+            } else {
+                $body = $response->getResponse()->getBody();
+            }
 
-            return $fullArray;
+            $fullArray = json_decode($body, true);
+            return $fullArray ?? ['data' => [], 'dictionaries' => []];
         } catch (\Exception $e) {
             throw new \Exception('Error fetching flight offers: ' . $e->getMessage());
         }
