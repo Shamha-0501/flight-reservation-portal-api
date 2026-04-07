@@ -19,9 +19,6 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(append: [
             EnsureFrontendRequestsAreStateful::class,
-            EncryptCookies::class,
-            AddQueuedCookiesToResponse::class,
-            ShareErrorsFromSession::class,
             SubstituteBindings::class
         ]);
     })
