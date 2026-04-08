@@ -14,6 +14,7 @@ class FlightSearchController extends Controller
             'destinationLocationCode' => 'required|string|max:10',
             'departureDate' => 'required|date_format:Y-m-d|after_or_equal:today',
             'returnDate' => 'nullable|date_format:Y-m-d|after_or_equal:departureDate',
+            'trip' => 'nullable|in:oneway,roundtrip',
             'adults' => 'required|integer|min:1',
             'children' => 'nullable|integer|min:0',
             'infants' => 'nullable|integer|min:0',
@@ -66,11 +67,14 @@ class FlightSearchController extends Controller
         ]);
 
         // Pull enough offers to power facets + sliders
+        $isRoundTrip = ($validated['trip'] ?? 'roundtrip') === 'roundtrip';
+        $returnDate = $isRoundTrip ? ($validated['returnDate'] ?? null) : null;
+
         $results = $this->getFlightOffers(
             $validated['originLocationCode'],
             $validated['destinationLocationCode'],
             $validated['departureDate'],
-            $validated['returnDate'] ?? null,
+            $returnDate,
             $validated['adults'],
             $validated['children'] ?? 0,
             $validated['infants'] ?? 0,
@@ -669,3 +673,6 @@ class FlightSearchController extends Controller
         return "{$h} h {$m} m";
     }
 }
+
+
+
