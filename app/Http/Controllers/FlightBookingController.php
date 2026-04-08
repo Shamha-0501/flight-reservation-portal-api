@@ -5,8 +5,11 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 
-class FlightSearchController extends Controller
+class FlightBookingController extends Controller
 {
+    // -----------------------------
+    // Flight offers search
+    // -----------------------------
     public function searchFlightOffers(Request $request)
     {
         $validated = $request->validate([
@@ -130,6 +133,99 @@ class FlightSearchController extends Controller
             ],
             'dictionaries' => $dictionaries,
         ], 200);
+    }
+
+    // -----------------------------
+    // Flight offers search
+    // -----------------------------
+    public function selectFlightOffer(Request $request)
+    {
+        $validated = $request->validate([
+            // Top‑level
+            'currencyCode'                                      => ['required', 'string', 'size:3'],
+
+            // originDestinations   
+            'originDestinations'                                => ['required', 'array', 'min:1'],
+            // 'originDestinations.*.id'                           => ['required', 'string'],
+            // 'originDestinations.*.originLocationCode'           => ['required', 'string', 'size:3'],
+            // 'originDestinations.*.destinationLocationCode'      => ['required', 'string', 'size:3'],
+            // 'originDestinations.*.departureDateTimeRange'       => ['required', 'array'],
+            // 'originDestinations.*.departureDateTimeRange.date'  => ['required', 'date', 'after_or_equal:today'],
+            // 'originDestinations.*.departureDateTimeRange.time'  => ['required', 'date_format:H:i:s'],
+
+            // travelers
+            'travelers'                                         => ['required', 'array', 'min:1'],
+            // 'travelers.*.id'                                    => ['required', 'string'],
+            // 'travelers.*.travelerType'                          => ['required', 'string', 'in:ADULT,CHILD,INFANT'],
+            // 'travelers.*.fareOptions'                           => ['sometimes', 'array'],
+            // 'travelers.*.fareOptions.*'                         => ['required', 'string'],
+
+            // sources
+            'sources'                                           => ['required', 'array', 'min:1'],
+            // 'sources.*'                                         => ['required', 'string', 'max:3'],
+
+            // searchCriteria
+            'searchCriteria'                                    => ['required', 'array'],
+            // 'searchCriteria.maxFlightOffers'                    => ['nullable', 'integer', 'min:1', 'max:500'],
+
+            // flightFilters (optional but matched)
+            'searchCriteria.flightFilters'                                              => ['nullable', 'array'],
+            // 'searchCriteria.flightFilters.cabinRestrictions'                            => ['nullable', 'array'],
+            // 'searchCriteria.flightFilters.cabinRestrictions.*.cabin'                    => ['required_with:searchCriteria.flightFilters.cabinRestrictions', 'string', 'in:ECONOMY,PREAMIUM_ECONOMY,BUSINESS,FIRST'],
+            // 'searchCriteria.flightFilters.cabinRestrictions.*.coverage'                 => ['required_with:searchCriteria.flightFilters.cabinRestrictions', 'string', 'in:ALL_SEGMENTS,MOST_SEGMENTS'],
+            // 'searchCriteria.flightFilters.cabinRestrictions.*.originDestinationIds'     => ['required_with:searchCriteria.flightFilters.cabinRestrictions.*.cabin', 'array'],
+            // 'searchCriteria.flightFilters.cabinRestrictions.*.originDestinationIds.*'   => ['string'],
+
+            'searchCriteria.flightFilters.carrierRestrictions'                          => ['nullable', 'array'],
+            // 'searchCriteria.flightFilters.carrierRestrictions.excludedCarrierCodes'     => ['nullable', 'array'],
+            // 'searchCriteria.flightFilters.carrierRestrictions.excludedCarrierCodes.*'   => ['string', 'size:2'],
+        ]);
+
+        $results = $this->postFlightOffers($validated);
+
+        return response()->json([
+            'success' => !empty($results['data']),
+            'data'    => $results['data'] ?? [],
+            'meta'    => $results['meta'] ?? [],
+            'errors'  => empty($results['data']) ? ['No flight offers found'] : null,
+        ]);
+    }
+
+    // -----------------------------
+    // Flight offers pricing
+    // -----------------------------
+    public function selectFlightOfferPricing(Request $request)
+    {
+        $request->validate([
+            'data' => ['required', 'array'],
+            'data.type' => ['required', 'in:flight-offers-pricing']
+        ]);
+
+        $flightOffer = $request->input('data.flightOffers.0');
+
+        return response()->json(
+            $this->postFlightOffersPrice($flightOffer)
+        );
+    }
+
+    // -----------------------------
+    // Flight create order
+    // -----------------------------
+    public function flightCreateOrder(Request $request)
+    {
+        $request->validate([
+            'data' => ['required', 'array'],
+            'data.type' => ['required', 'in:flight-order'],
+            'data.flightOffers' => ['required', 'array', 'min:1'],
+            'data.travelers' => ['required', 'array', 'min:1'],
+            'data.contacts' => ['required', 'array', 'min:1'],
+        ]);
+
+        $payload = $request->input('data');
+
+        $results = $this->postFlightCreateOrder($payload);
+
+        return response()->json($results);
     }
 
     // -----------------------------
@@ -563,10 +659,10 @@ class FlightSearchController extends Controller
 
         // Sort airlines/layovers like UI (by fromPrice asc, then count desc)
         $airlineList = array_values($airlines);
-        usort($airlineList, fn($a,$b) => ($a['fromPrice'] ?? PHP_INT_MAX) <=> ($b['fromPrice'] ?? PHP_INT_MAX) ?: ($b['count'] <=> $a['count']));
+        usort($airlineList, fn($a, $b) => ($a['fromPrice'] ?? PHP_INT_MAX) <=> ($b['fromPrice'] ?? PHP_INT_MAX) ?: ($b['count'] <=> $a['count']));
 
         $layoverList = array_values($layovers);
-        usort($layoverList, fn($a,$b) => ($a['fromPrice'] ?? PHP_INT_MAX) <=> ($b['fromPrice'] ?? PHP_INT_MAX) ?: ($b['count'] <=> $a['count']));
+        usort($layoverList, fn($a, $b) => ($a['fromPrice'] ?? PHP_INT_MAX) <=> ($b['fromPrice'] ?? PHP_INT_MAX) ?: ($b['count'] <=> $a['count']));
 
         return [
             'stops' => array_values($stops),
@@ -651,7 +747,8 @@ class FlightSearchController extends Controller
                 'inbound' => ['min' => (int)$inMin, 'max' => (int)$inMax],
             ],
             'durationMinutes' => [
-                'min' => (int)$minDur, 'max' => (int)$maxDur,
+                'min' => (int)$minDur,
+                'max' => (int)$maxDur,
             ],
             'layovers' => [
                 'avoid' => array_map('strtoupper', $validated['avoidLayovers'] ?? []),
@@ -673,6 +770,3 @@ class FlightSearchController extends Controller
         return "{$h} h {$m} m";
     }
 }
-
-
-
