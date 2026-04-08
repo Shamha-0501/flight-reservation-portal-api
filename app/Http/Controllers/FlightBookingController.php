@@ -146,39 +146,39 @@ class FlightBookingController extends Controller
 
             // originDestinations   
             'originDestinations'                                => ['required', 'array', 'min:1'],
-            // 'originDestinations.*.id'                           => ['required', 'string'],
-            // 'originDestinations.*.originLocationCode'           => ['required', 'string', 'size:3'],
-            // 'originDestinations.*.destinationLocationCode'      => ['required', 'string', 'size:3'],
-            // 'originDestinations.*.departureDateTimeRange'       => ['required', 'array'],
-            // 'originDestinations.*.departureDateTimeRange.date'  => ['required', 'date', 'after_or_equal:today'],
-            // 'originDestinations.*.departureDateTimeRange.time'  => ['required', 'date_format:H:i:s'],
+            'originDestinations.*.id'                           => ['required', 'string'],
+            'originDestinations.*.originLocationCode'           => ['required', 'string', 'size:3'],
+            'originDestinations.*.destinationLocationCode'      => ['required', 'string', 'size:3'],
+            'originDestinations.*.departureDateTimeRange'       => ['required', 'array'],
+            'originDestinations.*.departureDateTimeRange.date'  => ['required', 'date', 'after_or_equal:today'],
+            'originDestinations.*.departureDateTimeRange.time'  => ['required', 'date_format:H:i:s'],
 
             // travelers
             'travelers'                                         => ['required', 'array', 'min:1'],
-            // 'travelers.*.id'                                    => ['required', 'string'],
-            // 'travelers.*.travelerType'                          => ['required', 'string', 'in:ADULT,CHILD,INFANT'],
-            // 'travelers.*.fareOptions'                           => ['sometimes', 'array'],
-            // 'travelers.*.fareOptions.*'                         => ['required', 'string'],
+            'travelers.*.id'                                    => ['required', 'string'],
+            'travelers.*.travelerType'                          => ['required', 'string', 'in:ADULT,CHILD,INFANT'],
+            'travelers.*.fareOptions'                           => ['sometimes', 'array'],
+            'travelers.*.fareOptions.*'                         => ['required', 'string'],
 
             // sources
             'sources'                                           => ['required', 'array', 'min:1'],
-            // 'sources.*'                                         => ['required', 'string', 'max:3'],
+            'sources.*'                                         => ['required', 'string', 'max:3'],
 
             // searchCriteria
             'searchCriteria'                                    => ['required', 'array'],
-            // 'searchCriteria.maxFlightOffers'                    => ['nullable', 'integer', 'min:1', 'max:500'],
+            'searchCriteria.maxFlightOffers'                    => ['nullable', 'integer', 'min:1', 'max:500'],
 
             // flightFilters (optional but matched)
             'searchCriteria.flightFilters'                                              => ['nullable', 'array'],
-            // 'searchCriteria.flightFilters.cabinRestrictions'                            => ['nullable', 'array'],
-            // 'searchCriteria.flightFilters.cabinRestrictions.*.cabin'                    => ['required_with:searchCriteria.flightFilters.cabinRestrictions', 'string', 'in:ECONOMY,PREAMIUM_ECONOMY,BUSINESS,FIRST'],
-            // 'searchCriteria.flightFilters.cabinRestrictions.*.coverage'                 => ['required_with:searchCriteria.flightFilters.cabinRestrictions', 'string', 'in:ALL_SEGMENTS,MOST_SEGMENTS'],
-            // 'searchCriteria.flightFilters.cabinRestrictions.*.originDestinationIds'     => ['required_with:searchCriteria.flightFilters.cabinRestrictions.*.cabin', 'array'],
-            // 'searchCriteria.flightFilters.cabinRestrictions.*.originDestinationIds.*'   => ['string'],
+            'searchCriteria.flightFilters.cabinRestrictions'                            => ['nullable', 'array'],
+            'searchCriteria.flightFilters.cabinRestrictions.*.cabin'                    => ['required_with:searchCriteria.flightFilters.cabinRestrictions', 'string', 'in:ECONOMY,PREAMIUM_ECONOMY,BUSINESS,FIRST'],
+            'searchCriteria.flightFilters.cabinRestrictions.*.coverage'                 => ['required_with:searchCriteria.flightFilters.cabinRestrictions', 'string', 'in:ALL_SEGMENTS,MOST_SEGMENTS'],
+            'searchCriteria.flightFilters.cabinRestrictions.*.originDestinationIds'     => ['required_with:searchCriteria.flightFilters.cabinRestrictions.*.cabin', 'array'],
+            'searchCriteria.flightFilters.cabinRestrictions.*.originDestinationIds.*'   => ['string'],
 
             'searchCriteria.flightFilters.carrierRestrictions'                          => ['nullable', 'array'],
-            // 'searchCriteria.flightFilters.carrierRestrictions.excludedCarrierCodes'     => ['nullable', 'array'],
-            // 'searchCriteria.flightFilters.carrierRestrictions.excludedCarrierCodes.*'   => ['string', 'size:2'],
+            'searchCriteria.flightFilters.carrierRestrictions.excludedCarrierCodes'     => ['nullable', 'array'],
+            'searchCriteria.flightFilters.carrierRestrictions.excludedCarrierCodes.*'   => ['string', 'size:2'],
         ]);
 
         $results = $this->postFlightOffers($validated);
