@@ -122,9 +122,4 @@ return [
         'driver' => env('APP_MAINTENANCE_DRIVER', 'file'),
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
-
-    'amadeus' => [
-        'client_id' => env('AMADEUS_CLIENT_ID', ''),
-        'client_secret' => env('AMADEUS_CLIENT_SECRET', ''),
-    ],
 ];

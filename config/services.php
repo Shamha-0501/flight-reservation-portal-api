@@ -35,4 +35,7 @@ return [
         ],
     ],
 
+    'duffel' => [
+        'api_key' => env('DUFFEL_API_KEY', ''),
+    ]
 ];
