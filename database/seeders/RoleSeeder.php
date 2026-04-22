@@ -64,9 +64,7 @@ class RoleSeeder extends Seeder
             ]
         ];
 
-        DB::statement('SET FOREIGN_KEY_CHECKS=0;');
         Role::truncate();
-        DB::statement('SET FOREIGN_KEY_CHECKS=1;');
         Role::upsert($roles, [], []);
     }
 }

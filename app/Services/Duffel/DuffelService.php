@@ -140,7 +140,7 @@ class DuffelService
 
         return $this->createOfferRequest(
             payload: $payload,
-            returnOffers: false,
+            returnOffers: true,
             supplierTimeout: $input['supplierTimeout'] ?? 15000
         );
     }
