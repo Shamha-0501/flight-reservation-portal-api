@@ -153,7 +153,7 @@ class FlightController extends Controller
             $offers = $this->duffel->filterValidOffers($offers, 30);
 
             $normalizedAll = array_map(
-                fn (array $offer) => $this->normalizeDuffelOffer($offer),
+                fn(array $offer) => $this->normalizeDuffelOffer($offer),
                 $offers
             );
 
@@ -162,7 +162,7 @@ class FlightController extends Controller
 
             $filtered = array_values(array_filter(
                 $normalizedAll,
-                fn (array $offer) => $this->passesFilters($offer, $validated)
+                fn(array $offer) => $this->passesFilters($offer, $validated)
             ));
 
             $sortBy = $validated['sortBy'] ?? 'best';
@@ -237,9 +237,10 @@ class FlightController extends Controller
                 'passengers.*.family_name' => 'required|string',
                 'passengers.*.born_on' => 'required|date',
                 'passengers.*.gender' => 'required|string',
-                'passengers.*.email' => 'required|email',
-                'passengers.*.phone_number' => 'required|string',
+                'passengers.*.email' => 'nullable|email',
+                'passengers.*.phone_number' => 'nullable|string',
                 'passengers.*.loyalty_programme_accounts' => 'nullable|array',
+                'passengers.*.infant_passenger_id' => 'nullable|string',
             ]);
 
             $offerResponse = $this->duffel->getOffer($validated['offer_id']);
