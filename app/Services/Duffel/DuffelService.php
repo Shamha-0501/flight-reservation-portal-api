@@ -141,7 +141,7 @@ class DuffelService
         return $this->createOfferRequest(
             payload: $payload,
             returnOffers: true,
-            supplierTimeout: $input['supplierTimeout'] ?? 30000
+            supplierTimeout: $input['supplierTimeout'] ?? 60000
         );
     }
 
@@ -187,6 +187,117 @@ class DuffelService
         return $this->client->get("/air/orders/{$orderId}");
     }
 
+    public function listOrders(array $params = []): array
+    {
+        return $this->client->get('/air/orders', $params);
+    }
+
+    public function updateOrder(string $orderId, array $payload): array
+    {
+        return $this->client->patch("/air/orders/{$orderId}", [
+            'data' => $payload,
+        ]);
+    }
+
+    public function getAvailableServices(string $orderId): array
+    {
+        return $this->client->get("/air/orders/{$orderId}/available_services");
+    }
+
+    public function addServiceToOrder(string $orderId, array $services): array
+    {
+        return $this->client->post("/air/orders/{$orderId}/services", [
+            'data' => [
+                'services' => $services,
+            ],
+        ]);
+    }
+
+    public function createOrderCancellation(string $orderId): array
+    {
+        return $this->client->post('/air/order_cancellations', [
+            'data' => [
+                'order_id' => $orderId,
+            ],
+        ]);
+    }
+
+    public function getOrderCancellation(string $cancellationId): array
+    {
+        return $this->client->get("/air/order_cancellations/{$cancellationId}");
+    }
+
+    public function confirmOrderCancellation(string $cancellationId): array
+    {
+        return $this->client->post("/air/order_cancellations/{$cancellationId}/actions/confirm");
+    }
+
+    public function createOrderChangeRequest(array $payload): array
+    {
+        return $this->client->post('/air/order_change_requests', [
+            'data' => $payload,
+        ]);
+    }
+
+    public function getOrderChangeRequest(string $orderChangeRequestId): array
+    {
+        return $this->client->get("/air/order_change_requests/{$orderChangeRequestId}");
+    }
+
+    public function getOrderChangeOffer(string $orderChangeOfferId): array
+    {
+        return $this->client->get("/air/order_change_offers/{$orderChangeOfferId}");
+    }
+
+    public function createOrderChange(array $payload): array
+    {
+        return $this->client->post('/air/order_changes', [
+            'data' => $payload,
+        ]);
+    }
+
+    public function getOrderChange(string $orderChangeId): array
+    {
+        return $this->client->get("/air/order_changes/{$orderChangeId}");
+    }
+
+    public function confirmOrderChange(string $orderChangeId, array $payment = []): array
+    {
+        $body = empty($payment) ? [] : [
+            'data' => [
+                'payment' => $payment,
+            ],
+        ];
+
+        return $this->client->post("/air/order_changes/{$orderChangeId}/actions/confirm", $body);
+    }
+
+    public function getSeatMaps(string $offerId): array
+    {
+        return $this->client->get('/air/seat_maps', [
+            'offer_id' => $offerId,
+        ]);
+    }
+
+    public function createPaymentIntent(array $payload): array
+    {
+        return $this->client->post('/payments/payment_intents', [
+            'data' => $payload,
+        ]);
+    }
+
+    public function getPaymentIntent(string $paymentIntentId): array
+    {
+        return $this->client->get("/payments/payment_intents/{$paymentIntentId}");
+    }
+
+    public function confirmPaymentIntent(string $paymentIntentId): array
+    {
+        return $this->client->post(
+            "/payments/payment_intents/{$paymentIntentId}/actions/confirm"
+        );
+    }
+
     private function minutesToTime(?int $minutes): ?string
     {
         if ($minutes === null) {
@@ -197,31 +308,5 @@ class DuffelService
         $mins = $minutes % 60;
 
         return sprintf('%02d:%02d', $hours, $mins);
-    }
-
-    private function buildTimeWindow(?int $min, ?int $max): ?array
-    {
-        $window = array_filter([
-            'from' => $this->minutesToTime($min),
-            'to'   => $this->minutesToTime($max),
-        ]);
-
-        return empty($window) ? null : $window;
-    }
-
-    public function filterValidOffers(array $offers, int $minSecondsToExpiry = 300): array
-    {
-        return array_values(array_filter($offers, function (array $offer) use ($minSecondsToExpiry) {
-            $expiresAt = $offer['expires_at'] ?? null;
-
-            if (!$expiresAt) {
-                return true;
-            }
-
-            $now = Carbon::now('UTC');
-            $expires = Carbon::parse($expiresAt)->utc();
-
-            return $expires->greaterThan($now->copy()->addSeconds($minSecondsToExpiry));
-        }));
     }
 }

@@ -22,10 +22,7 @@ class PolicySubjectSeeder extends Seeder
                 'subject_id' => 1,
             ]
         ];
-
-        DB::statement('SET FOREIGN_KEY_CHECKS=0;');
-        PolicySubject::truncate();
-        DB::statement('SET FOREIGN_KEY_CHECKS=1;');
+        
         PolicySubject::upsert($policy_subjects, [], []);
     }
 }

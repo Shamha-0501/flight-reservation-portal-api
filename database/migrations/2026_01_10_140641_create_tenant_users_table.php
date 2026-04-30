@@ -12,19 +12,14 @@ return new class extends Migration {
 
       $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
       $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
-
-      $table->string('role', 30)->default('customer'); // owner|admin|member
-      $table->string('status', 20)->default('active'); // active|invited|disabled
-
-      $table->timestamp('joined_at')->nullable();
-      $table->timestamp('last_seen_at')->nullable();
+      $table->foreignId('role_id')->constrained('pbac_roles');
       $table->foreignId('invited_by_user_id')->nullable()->constrained('users')->nullOnDelete();
-
       $table->timestamp('created_at')->useCurrent();
       $table->timestamp('updated_at')->useCurrentOnUpdate();
       $table->softDeletes();
 
       $table->unique(['tenant_id', 'user_id']);
+      $table->index(['tenant_id', 'user_id']);
       $table->index(['user_id', 'status']);
       $table->index(['tenant_id', 'role']);
     });

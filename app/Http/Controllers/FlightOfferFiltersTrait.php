@@ -2,11 +2,195 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Support\Carbon;
+
 trait FlightOfferFiltersTrait
 {
-    private function traitSafeArray($value): array
+    private function safeArray($value): array
     {
         return is_array($value) ? $value : [];
+    }
+
+    public function filterValidOffers(array $offers, int $minSecondsToExpiry = 300): array
+    {
+        return array_values(array_filter($offers, function (array $offer) use ($minSecondsToExpiry) {
+            $expiresAt = $offer['expires_at'] ?? null;
+
+            if (!$expiresAt) {
+                return true;
+            }
+
+            $now = Carbon::now('UTC');
+            $expires = Carbon::parse($expiresAt)->utc();
+
+            return $expires->greaterThan($now->copy()->addSeconds($minSecondsToExpiry));
+        }));
+    }
+
+    private function normalizeDuffelOffer(array $offer): array
+    {
+        $slices = $this->safeArray($offer['slices'] ?? null);
+
+        $out = $slices[0] ?? null;
+        $in  = $slices[1] ?? null;
+
+        $outC = is_array($out) ? $this->computeDuffelSlice($out) : null;
+        $inC  = is_array($in) ? $this->computeDuffelSlice($in) : null;
+
+        $totalAmount = (float)($offer['total_amount'] ?? 0);
+        $totalDuration = ($outC['durationMinutes'] ?? 0) + ($inC['durationMinutes'] ?? 0);
+        $maxStops = max($outC['stops'] ?? 0, $inC['stops'] ?? 0);
+
+        $airlines = array_values(array_unique(array_merge(
+            $this->safeArray($outC['airlines'] ?? null),
+            $this->safeArray($inC['airlines'] ?? null)
+        )));
+
+        $layovers = array_values(array_unique(array_merge(
+            $this->safeArray($outC['layovers'] ?? null),
+            $this->safeArray($inC['layovers'] ?? null)
+        )));
+
+        $baggage = $this->computeDuffelBaggage($offer);
+        [$refundAvail, $changeAvail] = $this->computeDuffelAmenities($offer);
+
+        $offer['computed'] = [
+            'grandTotal' => $totalAmount,
+            'airlines' => $airlines,
+            'outbound' => $outC,
+            'inbound' => $inC,
+            'maxStops' => $maxStops,
+            'layoverAirports' => $layovers,
+            'totalDurationMinutes' => $totalDuration,
+            'refundableAvailable' => $refundAvail,
+            'changeableAvailable' => $changeAvail,
+            'baggage' => $baggage,
+        ];
+
+        return $offer;
+    }
+
+    private function computeDuffelSlice(array $slice): array
+    {
+        $segments = $this->safeArray($slice['segments'] ?? null);
+        $stops = max(count($segments) - 1, 0);
+
+        $first = $segments[0] ?? null;
+        $last = !empty($segments) ? $segments[count($segments) - 1] : null;
+
+        $departAt = is_array($first) ? ($first['departing_at'] ?? null) : null;
+        $arriveAt = is_array($last) ? ($last['arriving_at'] ?? null) : null;
+
+        $durationMinutes = 0;
+        if ($departAt && $arriveAt) {
+            $durationMinutes = Carbon::parse($departAt)
+                ->diffInMinutes(Carbon::parse($arriveAt));
+        }
+
+        $departMinuteOfDay = null;
+        if ($departAt) {
+            $dt = Carbon::parse($departAt);
+            $departMinuteOfDay = ($dt->hour * 60) + $dt->minute;
+        }
+
+        $layovers = [];
+        $layoverMinutes = 0;
+        $airlines = [];
+
+        foreach ($segments as $i => $seg) {
+            if (!is_array($seg)) {
+                continue;
+            }
+
+            $marketingCarrier = $seg['marketing_carrier'] ?? null;
+            $operatingCarrier = $seg['operating_carrier'] ?? null;
+            $destination = $seg['destination'] ?? null;
+
+            if (is_array($marketingCarrier) && !empty($marketingCarrier['iata_code'])) {
+                $airlines[] = strtoupper($marketingCarrier['iata_code']);
+            } elseif (is_array($operatingCarrier) && !empty($operatingCarrier['iata_code'])) {
+                $airlines[] = strtoupper($operatingCarrier['iata_code']);
+            }
+
+            if ($i < count($segments) - 1) {
+                if (is_array($destination) && !empty($destination['iata_code'])) {
+                    $layovers[] = strtoupper($destination['iata_code']);
+                }
+
+                $arr = $seg['arriving_at'] ?? null;
+                $nextSeg = $segments[$i + 1] ?? null;
+                $dep = is_array($nextSeg) ? ($nextSeg['departing_at'] ?? null) : null;
+
+                if ($arr && $dep) {
+                    $layoverMinutes += Carbon::parse($arr)
+                        ->diffInMinutes(Carbon::parse($dep), false);
+                }
+            }
+        }
+
+        return [
+            'stops' => $stops,
+            'durationMinutes' => $durationMinutes,
+            'departAt' => $departAt,
+            'arriveAt' => $arriveAt,
+            'departMinuteOfDay' => $departMinuteOfDay,
+            'layovers' => array_values(array_unique($layovers)),
+            'layoverMinutes' => $layoverMinutes,
+            'airlines' => array_values(array_unique($airlines)),
+        ];
+    }
+
+    private function computeDuffelBaggage(array $offer): array
+    {
+        $hasCarryOn = false;
+        $hasChecked = false;
+        $minCheckedBags = 0;
+        $minCabinKg = null;
+
+        $services = $this->safeArray($offer['available_services'] ?? null);
+        foreach ($services as $service) {
+            if (!is_array($service)) {
+                continue;
+            }
+
+            $type = strtoupper((string)($service['type'] ?? ''));
+            $text = strtoupper(json_encode($service) ?: '');
+
+            if (str_contains($type, 'BAG') || str_contains($text, 'CHECKED')) {
+                $hasChecked = true;
+            }
+
+            if (str_contains($text, 'CARRY') || str_contains($text, 'CABIN')) {
+                $hasCarryOn = true;
+            }
+        }
+
+        return [
+            'hasCarryOn' => $hasCarryOn,
+            'hasChecked' => $hasChecked,
+            'minCheckedBags' => $minCheckedBags,
+            'minCabinKg' => $minCabinKg,
+        ];
+    }
+
+    private function computeDuffelAmenities(array $offer): array
+    {
+        $refund = false;
+        $change = false;
+
+        $conditions = $offer['conditions'] ?? null;
+        $conditionsArray = is_array($conditions) ? $conditions : [];
+        $text = strtoupper(json_encode($conditionsArray) ?: '');
+
+        if (str_contains($text, 'REFUND')) {
+            $refund = true;
+        }
+
+        if (str_contains($text, 'CHANGE')) {
+            $change = true;
+        }
+
+        return [$refund, $change];
     }
 
     private function passesFilters(array $offer, array $f): bool
@@ -39,12 +223,12 @@ trait FlightOfferFiltersTrait
 
         if (!empty($f['includeAirlines']) && is_array($f['includeAirlines'])) {
             $inc = array_map('strtoupper', $f['includeAirlines']);
-            if (empty(array_intersect($inc, $this->traitSafeArray($c['airlines'] ?? null)))) return false;
+            if (empty(array_intersect($inc, $this->safeArray($c['airlines'] ?? null)))) return false;
         }
 
         if (!empty($f['excludeAirlines']) && is_array($f['excludeAirlines'])) {
             $exc = array_map('strtoupper', $f['excludeAirlines']);
-            if (!empty(array_intersect($exc, $this->traitSafeArray($c['airlines'] ?? null)))) return false;
+            if (!empty(array_intersect($exc, $this->safeArray($c['airlines'] ?? null)))) return false;
         }
 
         if (isset($f['outDepartMin']) || isset($f['outDepartMax'])) {
@@ -68,12 +252,12 @@ trait FlightOfferFiltersTrait
 
         if (!empty($f['avoidLayovers']) && is_array($f['avoidLayovers'])) {
             $avoid = array_map('strtoupper', $f['avoidLayovers']);
-            if (!empty(array_intersect($avoid, $this->traitSafeArray($c['layoverAirports'] ?? null)))) return false;
+            if (!empty(array_intersect($avoid, $this->safeArray($c['layoverAirports'] ?? null)))) return false;
         }
 
         if (!empty($f['onlyLayovers']) && is_array($f['onlyLayovers'])) {
             $only = array_map('strtoupper', $f['onlyLayovers']);
-            if (empty(array_intersect($only, $this->traitSafeArray($c['layoverAirports'] ?? null)))) return false;
+            if (empty(array_intersect($only, $this->safeArray($c['layoverAirports'] ?? null)))) return false;
         }
 
         if (array_key_exists('refundable', $f) && $f['refundable'] !== null) {
@@ -223,7 +407,7 @@ trait FlightOfferFiltersTrait
                 $this->facetHit($baggage['checked'], $price);
             }
 
-            foreach ($this->traitSafeArray($c['airlines'] ?? null) as $code) {
+            foreach ($this->safeArray($c['airlines'] ?? null) as $code) {
                 $code = strtoupper((string)$code);
                 if ($code === '') {
                     continue;
@@ -241,7 +425,7 @@ trait FlightOfferFiltersTrait
                 $this->facetHit($airlines[$code], $price);
             }
 
-            foreach ($this->traitSafeArray($c['layoverAirports'] ?? null) as $ap) {
+            foreach ($this->safeArray($c['layoverAirports'] ?? null) as $ap) {
                 $ap = strtoupper((string)$ap);
                 if ($ap === '') {
                     continue;
@@ -263,16 +447,14 @@ trait FlightOfferFiltersTrait
         $airlineList = array_values($airlines);
         usort(
             $airlineList,
-            fn ($a, $b) =>
-                (($a['fromPrice'] ?? PHP_INT_MAX) <=> ($b['fromPrice'] ?? PHP_INT_MAX))
+            fn($a, $b) => (($a['fromPrice'] ?? PHP_INT_MAX) <=> ($b['fromPrice'] ?? PHP_INT_MAX))
                 ?: (($b['count'] ?? 0) <=> ($a['count'] ?? 0))
         );
 
         $layoverList = array_values($layovers);
         usort(
             $layoverList,
-            fn ($a, $b) =>
-                (($a['fromPrice'] ?? PHP_INT_MAX) <=> ($b['fromPrice'] ?? PHP_INT_MAX))
+            fn($a, $b) => (($a['fromPrice'] ?? PHP_INT_MAX) <=> ($b['fromPrice'] ?? PHP_INT_MAX))
                 ?: (($b['count'] ?? 0) <=> ($a['count'] ?? 0))
         );
 
@@ -381,5 +563,40 @@ trait FlightOfferFiltersTrait
         $m = $minutes % 60;
 
         return "{$h} h {$m} m";
+    }
+
+    private function determineSeatMapStatus($seatMaps)
+    {
+        $data = $seatMaps['data'] ?? [];
+
+        if (empty($data)) {
+            return 'unavailable';
+        }
+
+        foreach ($data as $map) {
+            if (!empty($map['cabins'])) {
+                foreach ($map['cabins'] as $cabin) {
+                    foreach ($cabin['rows'] ?? [] as $row) {
+                        foreach ($row['sections'] ?? [] as $section) {
+                            foreach ($section['elements'] ?? [] as $element) {
+
+                                if (
+                                    $element['type'] === 'seat' &&
+                                    !empty($element['designator'])
+                                ) {
+                                    // Seat exists
+
+                                    if (!empty($element['available_services'])) {
+                                        return 'available'; // selectable seats exist
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return 'view_only'; // seat map exists but no selectable seats
     }
 }

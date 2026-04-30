@@ -32,9 +32,6 @@ class PermissionSeeder extends Seeder
             }
         }
 
-        DB::statement('SET FOREIGN_KEY_CHECKS=0;');
-        Permission::truncate();
-        DB::statement('SET FOREIGN_KEY_CHECKS=1;');
         Permission::upsert($permissions, [], []);
     }
 }

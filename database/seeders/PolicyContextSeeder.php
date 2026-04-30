@@ -30,9 +30,6 @@ class PolicyContextSeeder extends Seeder
             ]
         ];
 
-        DB::statement('SET FOREIGN_KEY_CHECKS=0;');
-        PolicyContext::truncate();
-        DB::statement('SET FOREIGN_KEY_CHECKS=1;');
         PolicyContext::upsert($policy_contexts, [], []);
     }
 }

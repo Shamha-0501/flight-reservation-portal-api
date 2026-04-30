@@ -54,9 +54,6 @@ class ResourceSeeder extends Seeder
 
         ];
 
-        DB::statement('SET FOREIGN_KEY_CHECKS=0;');
-        Resource::truncate();
-        DB::statement('SET FOREIGN_KEY_CHECKS=1;');
         Resource::upsert($resources, [], []);
     }
 }

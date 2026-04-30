@@ -49,6 +49,19 @@ class DuffelClient
         }
     }
 
+    public function patch(string $uri, array $payload = []): array 
+    {
+        try {
+            $response = $this->client->patch($uri, [
+                'json' => $payload
+            ]);
+
+            return json_decode((string) $response->getBody(), true) ?? [];
+        } catch (RequestException $e) {
+            throw new \Exception($this->formatError($e));
+        }
+    }
+
     protected function formatError(RequestException $e): string
     {
         $body = '';

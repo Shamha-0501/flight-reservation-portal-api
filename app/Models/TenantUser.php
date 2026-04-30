@@ -15,16 +15,11 @@ class TenantUser extends Pivot
     protected $fillable = [
         'tenant_id',
         'user_id',
-        'role',
-        'status',
-        'joined_at',
-        'last_seen_at',
+        'role_id',
         'invited_by_user_id',
     ];
 
     protected $dates = [
-        'joined_at',
-        'last_seen_at',
         'deleted_at',
     ];
 }

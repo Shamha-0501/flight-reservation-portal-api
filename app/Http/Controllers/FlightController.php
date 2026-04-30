@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Services\Duffel\DuffelService;
-use Carbon\Carbon;
+use Illuminate\Support\Carbon;
 
 class FlightController extends Controller
 {
@@ -150,7 +150,7 @@ class FlightController extends Controller
             );
 
             $offers = $this->safeArray($offersResponse['data'] ?? []);
-            $offers = $this->duffel->filterValidOffers($offers, 30);
+            $offers = $this->filterValidOffers($offers, 30);
 
             $normalizedAll = array_map(
                 fn(array $offer) => $this->normalizeDuffelOffer($offer),
@@ -215,10 +215,66 @@ class FlightController extends Controller
         try {
             $offer = $this->duffel->getOffer($offerId);
 
-            return response()->json($offer);
+            $seatMaps = $this->duffel->getSeatMaps($offerId);
+
+            $seatMapStatus = $this->determineSeatMapStatus($seatMaps);
+
+            return response()->json([
+                'offer' => $offer,
+                'seat_map_status' => $seatMapStatus
+            ]);
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Failed to fetch offer',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function createPaymentIntent(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'offer_id' => 'required|string',
+            ]);
+
+            $offerResponse = $this->duffel->getOffer($validated['offer_id']);
+            $offer = $offerResponse['data'] ?? null;
+
+            if (!is_array($offer) || empty($offer)) {
+                return response()->json([
+                    'error' => 'Offer not found',
+                ], 422);
+            }
+
+            $paymentIntent = $this->duffel->createPaymentIntent([
+                'amount' => $offer['total_amount'],
+                'currency' => $offer['total_currency'],
+            ]);
+
+            return response()->json($paymentIntent);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'error' => 'Validation failed',
+                'messages' => $e->errors(),
+            ], 422);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Payment intent creation failed',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function confirmPaymentIntent(string $paymentIntentId)
+    {
+        try {
+            $paymentIntent = $this->duffel->confirmPaymentIntent($paymentIntentId);
+
+            return response()->json($paymentIntent);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Payment intent confirmation failed',
                 'message' => $e->getMessage(),
             ], 500);
         }
@@ -296,174 +352,190 @@ class FlightController extends Controller
         }
     }
 
-    private function safeArray($value): array
+    public function updateOrder(Request $request, string $orderId)
     {
-        return is_array($value) ? $value : [];
+        try {
+            $validated = $request->validate([
+                'metadata' => 'nullable|array',
+                'passengers' => 'nullable|array',
+            ]);
+
+            return response()->json($this->duffel->updateOrder($orderId, $validated));
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Order update failed',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
     }
 
-    private function normalizeDuffelOffer(array $offer): array
+    public function getAvailableServices(string $orderId)
     {
-        $slices = $this->safeArray($offer['slices'] ?? null);
-
-        $out = $slices[0] ?? null;
-        $in  = $slices[1] ?? null;
-
-        $outC = is_array($out) ? $this->computeDuffelSlice($out) : null;
-        $inC  = is_array($in) ? $this->computeDuffelSlice($in) : null;
-
-        $totalAmount = (float)($offer['total_amount'] ?? 0);
-        $totalDuration = ($outC['durationMinutes'] ?? 0) + ($inC['durationMinutes'] ?? 0);
-        $maxStops = max($outC['stops'] ?? 0, $inC['stops'] ?? 0);
-
-        $airlines = array_values(array_unique(array_merge(
-            $this->safeArray($outC['airlines'] ?? null),
-            $this->safeArray($inC['airlines'] ?? null)
-        )));
-
-        $layovers = array_values(array_unique(array_merge(
-            $this->safeArray($outC['layovers'] ?? null),
-            $this->safeArray($inC['layovers'] ?? null)
-        )));
-
-        $baggage = $this->computeDuffelBaggage($offer);
-        [$refundAvail, $changeAvail] = $this->computeDuffelAmenities($offer);
-
-        $offer['computed'] = [
-            'grandTotal' => $totalAmount,
-            'airlines' => $airlines,
-            'outbound' => $outC,
-            'inbound' => $inC,
-            'maxStops' => $maxStops,
-            'layoverAirports' => $layovers,
-            'totalDurationMinutes' => $totalDuration,
-            'refundableAvailable' => $refundAvail,
-            'changeableAvailable' => $changeAvail,
-            'baggage' => $baggage,
-        ];
-
-        return $offer;
+        try {
+            return response()->json($this->duffel->getAvailableServices($orderId));
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Failed to fetch available services',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
     }
 
-    private function computeDuffelSlice(array $slice): array
+    public function getSeatMaps(Request $request)
     {
-        $segments = $this->safeArray($slice['segments'] ?? null);
-        $stops = max(count($segments) - 1, 0);
+        try {
+            $validated = $request->validate([
+                'offer_id' => 'required|string',
+            ]);
 
-        $first = $segments[0] ?? null;
-        $last = !empty($segments) ? $segments[count($segments) - 1] : null;
-
-        $departAt = is_array($first) ? ($first['departing_at'] ?? null) : null;
-        $arriveAt = is_array($last) ? ($last['arriving_at'] ?? null) : null;
-
-        $durationMinutes = 0;
-        if ($departAt && $arriveAt) {
-            $durationMinutes = Carbon::parse($departAt)
-                ->diffInMinutes(Carbon::parse($arriveAt));
+            return response()->json(
+                $this->duffel->getSeatMaps($validated['offer_id'])
+            );
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Failed to fetch seat maps',
+                'message' => $e->getMessage(),
+            ], 500);
         }
-
-        $departMinuteOfDay = null;
-        if ($departAt) {
-            $dt = Carbon::parse($departAt);
-            $departMinuteOfDay = ($dt->hour * 60) + $dt->minute;
-        }
-
-        $layovers = [];
-        $layoverMinutes = 0;
-        $airlines = [];
-
-        foreach ($segments as $i => $seg) {
-            if (!is_array($seg)) {
-                continue;
-            }
-
-            $marketingCarrier = $seg['marketing_carrier'] ?? null;
-            $operatingCarrier = $seg['operating_carrier'] ?? null;
-            $destination = $seg['destination'] ?? null;
-
-            if (is_array($marketingCarrier) && !empty($marketingCarrier['iata_code'])) {
-                $airlines[] = strtoupper($marketingCarrier['iata_code']);
-            } elseif (is_array($operatingCarrier) && !empty($operatingCarrier['iata_code'])) {
-                $airlines[] = strtoupper($operatingCarrier['iata_code']);
-            }
-
-            if ($i < count($segments) - 1) {
-                if (is_array($destination) && !empty($destination['iata_code'])) {
-                    $layovers[] = strtoupper($destination['iata_code']);
-                }
-
-                $arr = $seg['arriving_at'] ?? null;
-                $nextSeg = $segments[$i + 1] ?? null;
-                $dep = is_array($nextSeg) ? ($nextSeg['departing_at'] ?? null) : null;
-
-                if ($arr && $dep) {
-                    $layoverMinutes += Carbon::parse($arr)
-                        ->diffInMinutes(Carbon::parse($dep), false);
-                }
-            }
-        }
-
-        return [
-            'stops' => $stops,
-            'durationMinutes' => $durationMinutes,
-            'departAt' => $departAt,
-            'arriveAt' => $arriveAt,
-            'departMinuteOfDay' => $departMinuteOfDay,
-            'layovers' => array_values(array_unique($layovers)),
-            'layoverMinutes' => $layoverMinutes,
-            'airlines' => array_values(array_unique($airlines)),
-        ];
     }
 
-    private function computeDuffelBaggage(array $offer): array
+    public function createOrderCancellation(Request $request)
     {
-        $hasCarryOn = false;
-        $hasChecked = false;
-        $minCheckedBags = 0;
-        $minCabinKg = null;
+        try {
+            $validated = $request->validate([
+                'order_id' => 'required|string',
+            ]);
 
-        $services = $this->safeArray($offer['available_services'] ?? null);
-        foreach ($services as $service) {
-            if (!is_array($service)) {
-                continue;
-            }
-
-            $type = strtoupper((string)($service['type'] ?? ''));
-            $text = strtoupper(json_encode($service) ?: '');
-
-            if (str_contains($type, 'BAG') || str_contains($text, 'CHECKED')) {
-                $hasChecked = true;
-            }
-
-            if (str_contains($text, 'CARRY') || str_contains($text, 'CABIN')) {
-                $hasCarryOn = true;
-            }
+            return response()->json(
+                $this->duffel->createOrderCancellation($validated['order_id'])
+            );
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Order cancellation quote failed',
+                'message' => $e->getMessage(),
+            ], 500);
         }
-
-        return [
-            'hasCarryOn' => $hasCarryOn,
-            'hasChecked' => $hasChecked,
-            'minCheckedBags' => $minCheckedBags,
-            'minCabinKg' => $minCabinKg,
-        ];
     }
 
-    private function computeDuffelAmenities(array $offer): array
+    public function getOrderCancellation(string $cancellationId)
     {
-        $refund = false;
-        $change = false;
-
-        $conditions = $offer['conditions'] ?? null;
-        $conditionsArray = is_array($conditions) ? $conditions : [];
-        $text = strtoupper(json_encode($conditionsArray) ?: '');
-
-        if (str_contains($text, 'REFUND')) {
-            $refund = true;
+        try {
+            return response()->json($this->duffel->getOrderCancellation($cancellationId));
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Failed to fetch order cancellation',
+                'message' => $e->getMessage(),
+            ], 500);
         }
+    }
 
-        if (str_contains($text, 'CHANGE')) {
-            $change = true;
+    public function confirmOrderCancellation(string $cancellationId)
+    {
+        try {
+            return response()->json($this->duffel->confirmOrderCancellation($cancellationId));
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Order cancellation confirmation failed',
+                'message' => $e->getMessage(),
+            ], 500);
         }
+    }
 
-        return [$refund, $change];
+    public function createOrderChangeRequest(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'order_id' => 'required|string',
+                'slices' => 'required|array',
+                'slices.remove' => 'nullable|array',
+                'slices.remove.*.slice_id' => 'required_with:slices.remove|string',
+                'slices.add' => 'nullable|array',
+                'slices.add.*.origin' => 'required_with:slices.add|string|size:3',
+                'slices.add.*.destination' => 'required_with:slices.add|string|size:3',
+                'slices.add.*.departure_date' => 'required_with:slices.add|date_format:Y-m-d',
+                'slices.add.*.cabin_class' => 'nullable|string',
+            ]);
+
+            return response()->json($this->duffel->createOrderChangeRequest($validated));
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Order change request failed',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function getOrderChangeRequest(string $orderChangeRequestId)
+    {
+        try {
+            return response()->json(
+                $this->duffel->getOrderChangeRequest($orderChangeRequestId)
+            );
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Failed to fetch order change request',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function getOrderChangeOffer(string $orderChangeOfferId)
+    {
+        try {
+            return response()->json(
+                $this->duffel->getOrderChangeOffer($orderChangeOfferId)
+            );
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Failed to fetch order change offer',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function createOrderChange(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'selected_order_change_offer' => 'required|string',
+            ]);
+
+            return response()->json($this->duffel->createOrderChange($validated));
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Order change creation failed',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function getOrderChange(string $orderChangeId)
+    {
+        try {
+            return response()->json($this->duffel->getOrderChange($orderChangeId));
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Failed to fetch order change',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function confirmOrderChange(Request $request, string $orderChangeId)
+    {
+        try {
+            $validated = $request->validate([
+                'payment' => 'nullable|array',
+            ]);
+
+            return response()->json(
+                $this->duffel->confirmOrderChange($orderChangeId, $validated)
+            );
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Order change confirmation failed',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
     }
 }

@@ -32,14 +32,6 @@ class RoleSeeder extends Seeder
             ],
             [
                 'tenant_id' => null,
-                'key' => 'global_audit',
-                'name' => 'Global Auditor',
-                'scope' => 'global',
-                'is_external' => false,
-                'description' => 'Audit global data across system'
-            ],
-            [
-                'tenant_id' => null,
                 'key' => 'tenant_owner',
                 'name' => 'Tenant Owner',
                 'scope' => 'tenant',
@@ -64,7 +56,15 @@ class RoleSeeder extends Seeder
             ]
         ];
 
-        Role::truncate();
-        Role::upsert($roles, [], []);
+        $now = now();
+
+        $roles = array_map(function ($role) use ($now) {
+            return array_merge($role, [
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }, $roles);
+
+        Role::insert($roles);
     }
 }

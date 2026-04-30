@@ -26,9 +26,6 @@ class PolicySeeder extends Seeder
             ]
         ];
 
-        DB::statement('SET FOREIGN_KEY_CHECKS=0;');
-        Policy::truncate();
-        DB::statement('SET FOREIGN_KEY_CHECKS=1;');
         Policy::upsert($policies, [], []);
     }
 }

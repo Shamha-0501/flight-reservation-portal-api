@@ -9,8 +9,8 @@ return new class extends Migration {
     Schema::create('tenants', function (Blueprint $table) {
       $table->id();
 
-      $table->string('key', 80)->unique();      // "acme"
-      $table->string('name', 160);              // "Acme Pvt Ltd"
+      $table->uuid('key')->unique()->nullable();      
+      $table->string('name', 160);             
 
       $table->string('status', 20)->default('active'); // active|suspended|archived
       $table->string('timezone', 64)->default('UTC');
