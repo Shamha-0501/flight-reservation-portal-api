@@ -2,9 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Order;
+use App\Models\OrderAddon;
 use Illuminate\Http\Request;
 use App\Services\Duffel\DuffelService;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class FlightController extends Controller
 {
@@ -284,6 +288,7 @@ class FlightController extends Controller
     {
         try {
             $validated = $request->validate([
+                'tenant_id' => 'required|integer',
                 'offer_id' => 'required|string',
                 'passengers' => 'required|array|min:1',
                 'passengers.*.id' => 'required|string',
@@ -297,32 +302,81 @@ class FlightController extends Controller
                 'passengers.*.phone_number' => 'nullable|string',
                 'passengers.*.loyalty_programme_accounts' => 'nullable|array',
                 'passengers.*.infant_passenger_id' => 'nullable|string',
+
+                // Optional addons
+                'addons' => 'nullable|array',
             ]);
 
-            $offerResponse = $this->duffel->getOffer($validated['offer_id']);
-            $offer = $offerResponse['data'] ?? null;
+            return DB::transaction(function () use ($validated) {
+                $offerResponse = $this->duffel->getOffer($validated['offer_id']);
+                $offer = $offerResponse['data'] ?? null;
 
-            if (!is_array($offer) || empty($offer)) {
-                return response()->json([
-                    'error' => 'Offer not found',
-                ], 422);
-            }
+                if (!is_array($offer) || empty($offer)) {
+                    return response()->json([
+                        'error' => 'Offer not found',
+                    ], 422);
+                }
 
-            $payload = [
-                'selected_offers' => [$validated['offer_id']],
-                'payments' => [
-                    [
-                        'type' => 'balance',
-                        'amount' => $offer['total_amount'] ?? null,
-                        'currency' => $offer['total_currency'] ?? null,
+                $payload = [
+                    'selected_offers' => [$validated['offer_id']],
+                    'payments' => [
+                        [
+                            'type' => 'balance',
+                            'amount' => $offer['total_amount'] ?? null,
+                            'currency' => $offer['total_currency'] ?? null,
+                        ],
                     ],
-                ],
-                'passengers' => $validated['passengers'],
-            ];
+                    'passengers' => $validated['passengers'],
+                ];
 
-            $order = $this->duffel->createOrder($payload);
+                $duffelOrderResponse = $this->duffel->createOrder($payload);
+                $duffelOrder = $duffelOrderResponse['data'] ?? $duffelOrderResponse;
 
-            return response()->json($order);
+                if (!is_array($duffelOrder) || empty($duffelOrder['id'])) {
+                    throw new \Exception('Invalid Duffel order response');
+                }
+
+                $order = Order::create([
+                    'tenant_id' => $validated['tenant_id'],
+                    'user_id' => $validated['user_id'] ?? null,
+
+                    'duffel_order_id' => $duffelOrder['id'],
+                    'booking_reference' => $duffelOrder['booking_reference'] ?? null,
+                    'type' => $duffelOrder['type'] ?? 'instant',
+                    'status' => $duffelOrder['status'] ?? 'created',
+
+                    'base_amount' => $duffelOrder['base_amount'] ?? $offer['base_amount'] ?? null,
+                    'base_currency' => $duffelOrder['base_currency'] ?? $offer['base_currency'] ?? null,
+
+                    'tax_amount' => $duffelOrder['tax_amount'] ?? $offer['tax_amount'] ?? null,
+                    'tax_currency' => $duffelOrder['tax_currency'] ?? $offer['tax_currency'] ?? null,
+
+                    'total_amount' => $duffelOrder['total_amount'] ?? $offer['total_amount'] ?? null,
+                    'total_currency' => $duffelOrder['total_currency'] ?? $offer['total_currency'] ?? null,
+
+                    'synced_at' => now(),
+                    'void_window_ends_at' => $duffelOrder['void_window_ends_at'] ?? null,
+
+                    'meta' => [
+                        'offer' => $offer,
+                        'duffel_order' => $duffelOrder,
+                    ],
+                ]);
+
+                if (!empty($validated['addons'])) {
+                    OrderAddon::create(array_merge([
+                        'tenant_id' => $order->tenant_id,
+                        'order_id' => $order->id,
+                        'currency' => $order->total_currency,
+                    ], $validated['addons']));
+                }
+
+                return response()->json([
+                    'message' => 'Order created successfully',
+                    'order' => $order->load('passengers'),
+                    'duffel_order' => $duffelOrder,
+                ]);
+            });
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'error' => 'Validation failed',

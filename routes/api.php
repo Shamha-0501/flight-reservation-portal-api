@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\FlightController;
+use App\Http\Controllers\TenantAddonSettingController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('auth:sanctum')->get('/me', [AuthController::class, 'me']);
@@ -40,3 +41,5 @@ Route::get  ('/order-change-offers/{orderChangeOfferId}', [FlightController::cla
 Route::post ('/order-changes', [FlightController::class, 'createOrderChange']);
 Route::get  ('/order-changes/{orderChangeId}', [FlightController::class, 'getOrderChange']);
 Route::post ('/order-changes/{orderChangeId}/confirm', [FlightController::class, 'confirmOrderChange']);
+
+Route::get('/extras', [TenantAddonSettingController::class, 'getTenantAddonSettings']);
