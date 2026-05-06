@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Order;
 use App\Models\OrderAddon;
+use App\Models\Passenger;
+use App\Models\Tenant;
 use Illuminate\Http\Request;
 use App\Services\Duffel\DuffelService;
 use Illuminate\Support\Carbon;
@@ -103,7 +105,6 @@ class FlightController extends Controller
             ], 500);
         }
     }
-
     public function getOffers(Request $request)
     {
         try {
@@ -153,7 +154,25 @@ class FlightController extends Controller
                 $validated['limit'] ?? 200
             );
 
-            $offers = $this->safeArray($offersResponse['data'] ?? []);
+            $allOffers = $this->safeArray($offersResponse['data'] ?? []);
+
+            /**
+             * Fast expiry check.
+             * Do NOT call getOffer() for every offer here.
+             * Duffel list offers usually already includes expires_at.
+             */
+            $offers = array_values(array_filter($allOffers, function (array $offer) {
+                $expiresAt = $offer['expires_at'] ?? null;
+
+                if (!$expiresAt) {
+                    return true;
+                }
+
+                return Carbon::parse($expiresAt)->isFuture();
+            }));
+
+            $expiredRemoved = count($allOffers) - count($offers);
+
             $offers = $this->filterValidOffers($offers, 30);
 
             $normalizedAll = array_map(
@@ -171,6 +190,7 @@ class FlightController extends Controller
 
             $sortBy = $validated['sortBy'] ?? 'best';
             $sortDir = $validated['sortDir'] ?? 'asc';
+
             $filtered = $this->sortOffers($filtered, $sortBy, $sortDir);
 
             $summary = $this->buildSummaryCards($filtered);
@@ -180,6 +200,9 @@ class FlightController extends Controller
                 'data' => $filtered,
                 'meta' => [
                     'count' => count($filtered),
+                    'total_received' => count($allOffers),
+                    'expired_removed' => $expiredRemoved,
+                    'valid_count' => count($offers),
                     'currency' => $filtered[0]['total_currency']
                         ?? ($normalizedAll[0]['total_currency'] ?? null),
                     'appliedFilters' => $appliedFilters,
@@ -288,7 +311,7 @@ class FlightController extends Controller
     {
         try {
             $validated = $request->validate([
-                'tenant_id' => 'required|integer',
+                'tenantKey' => 'required|string',
                 'offer_id' => 'required|string',
                 'passengers' => 'required|array|min:1',
                 'passengers.*.id' => 'required|string',
@@ -336,8 +359,14 @@ class FlightController extends Controller
                     throw new \Exception('Invalid Duffel order response');
                 }
 
+                $tenant = Tenant::where('key', $validated['tenantKey'])->first();
+
+                if (!$tenant) {
+                    throw new \Exception('Invalid tenant.');
+                }
+
                 $order = Order::create([
-                    'tenant_id' => $validated['tenant_id'],
+                    'tenant_id' => $tenant->id,
                     'user_id' => $validated['user_id'] ?? null,
 
                     'duffel_order_id' => $duffelOrder['id'],
@@ -362,6 +391,29 @@ class FlightController extends Controller
                         'duffel_order' => $duffelOrder,
                     ],
                 ]);
+
+                foreach ($validated['passengers'] as $passengerData) {
+                    Passenger::create([
+                        'tenant_id' => $tenant->id,
+                        'order_id' => $order->id,
+
+                        'duffel_passenger_id' => $passengerData['id'] ?? null,
+                        'type' => $passengerData['type'] ?? null,
+                        'title' => $passengerData['title'] ?? null,
+                        'given_name' => $passengerData['given_name'] ?? null,
+                        'family_name' => $passengerData['family_name'] ?? null,
+                        'dob' => $passengerData['born_on'] ?? null,
+                        'gender' => $passengerData['gender'] ?? null,
+                        'email' => $passengerData['email'] ?? null,
+                        'phone_number' => $passengerData['phone_number'] ?? null,
+                        'infant_passenger_id' => $passengerData['infant_passenger_id'] ?? null,
+
+                        'meta' => [
+                            'loyalty_programme_accounts' => $passengerData['loyalty_programme_accounts'] ?? null,
+                            'raw_passenger' => $passengerData,
+                        ],
+                    ]);
+                }
 
                 if (!empty($validated['addons'])) {
                     OrderAddon::create(array_merge([
