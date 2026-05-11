@@ -9,6 +9,8 @@ use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Http\Request;
 use App\Services\Duffel\DuffelService;
+use App\Services\MailService;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -437,6 +439,25 @@ class FlightController extends Controller
                         'currency' => $order->total_currency,
                     ], $validated['addons']));
                 }
+
+                $pdf = Pdf::loadView('pdf.order-reference', [
+                    'tenant' => $tenant->name,
+                    'order' => $order->load('passengers'),
+                ]);
+
+                $htmlBody = view('emails.order-issued', [
+                    'tenant' => $tenant->name,
+                    'name' => $orderUser?->name ?? 'Customer',
+                    'order' => $order,
+                ])->render();
+
+                MailService::sendMail(
+                    $orderUser->email,
+                    $tenant->name . ' Booking Confirmation',
+                    $htmlBody,
+                    $pdf->output(),
+                    'booking-reference-' . $order->booking_reference . '.pdf'
+                );
 
                 return response()->json([
                     'message' => 'Order created successfully',
