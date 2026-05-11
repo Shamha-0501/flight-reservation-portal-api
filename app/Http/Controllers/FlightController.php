@@ -6,6 +6,7 @@ use App\Models\Order;
 use App\Models\OrderAddon;
 use App\Models\Passenger;
 use App\Models\Tenant;
+use App\Models\User;
 use Illuminate\Http\Request;
 use App\Services\Duffel\DuffelService;
 use Illuminate\Support\Carbon;
@@ -328,9 +329,23 @@ class FlightController extends Controller
 
                 // Optional addons
                 'addons' => 'nullable|array',
+                'contact_email' => 'nullable|email',
             ]);
 
-            return DB::transaction(function () use ($validated) {
+            $authUser = $request->user();
+
+            $orderEmail = $validated['contact_email']
+                ?? collect($validated['passengers'])->pluck('email')->filter()->first();
+
+            $orderUser = null;
+
+            if ($authUser) {
+                $orderUser = $authUser;
+            } elseif ($orderEmail) {
+                $orderUser = User::where('email', $orderEmail)->first();
+            }
+
+            return DB::transaction(function () use ($validated, $orderUser) {
                 $offerResponse = $this->duffel->getOffer($validated['offer_id']);
                 $offer = $offerResponse['data'] ?? null;
 
@@ -367,7 +382,7 @@ class FlightController extends Controller
 
                 $order = Order::create([
                     'tenant_id' => $tenant->id,
-                    'user_id' => $validated['user_id'] ?? null,
+                    'user_id' => $orderUser->id,
 
                     'duffel_order_id' => $duffelOrder['id'],
                     'booking_reference' => $duffelOrder['booking_reference'] ?? null,

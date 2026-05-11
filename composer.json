@@ -8,11 +8,13 @@
     "require": {
         "php": "^8.2",
         "amadeus4dev/amadeus-php": "^0.3.0",
+        "barryvdh/laravel-dompdf": "^3.1",
         "duffel/api": "^0.2.0",
         "guzzlehttp/guzzle": "^7.10",
         "laravel/framework": "^12.0",
-        "laravel/sanctum": "^4.2",
-        "laravel/tinker": "^2.10.1"
+        "laravel/sanctum": "^4.0",
+        "laravel/tinker": "^2.10.1",
+        "phpmailer/phpmailer": "^7.0"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

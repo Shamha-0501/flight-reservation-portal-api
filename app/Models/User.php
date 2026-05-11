@@ -26,6 +26,7 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'account_state',
     ];
 
     /**
@@ -56,10 +57,7 @@ class User extends Authenticatable
         return $this->belongsToMany(Tenant::class, 'tenant_user', 'user_id', 'tenant_id')
             ->using(TenantUser::class)
             ->withPivot([
-                'role',
-                'status',
-                'joined_at',
-                'last_seen_at',
+                'role_id',
                 'invited_by_user_id',
                 'deleted_at',
             ])

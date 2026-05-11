@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -22,4 +23,9 @@ class TenantUser extends Pivot
     protected $dates = [
         'deleted_at',
     ];
+
+    public function role(): BelongsTo
+    {
+        return $this->belongsTo(UserRole::class, 'role_id');
+    }
 }
