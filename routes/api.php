@@ -47,7 +47,8 @@ Route::post('/order-changes/{orderChangeId}/confirm', [FlightController::class, 
 Route::get('/tenants/active', [TenantController::class, 'getActiveTenants']);
 Route::get('/extras', [TenantAddonSettingController::class, 'getTenantAddonSettings']);
 
-Route::prefix('orders')->group(function () {
+Route::prefix('bookings')->group(function () {
     Route::get('/', [OrderController::class, 'index']);
     Route::get('/{order}', [OrderController::class, 'show']);
 });
+
