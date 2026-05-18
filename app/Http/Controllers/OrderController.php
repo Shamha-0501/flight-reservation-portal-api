@@ -24,7 +24,7 @@ class OrderController extends Controller
             ->with([
                 'user',
                 'passengers',
-                'addons',
+                // 'addons',
             ])
             ->latest();
 
@@ -56,7 +56,7 @@ class OrderController extends Controller
         $order->load([
             'user',
             'passengers',
-            'addons',
+            // 'addons',
         ]);
 
         return response()->json([
