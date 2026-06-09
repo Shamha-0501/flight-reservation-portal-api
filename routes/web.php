@@ -11,6 +11,8 @@ Route::middleware(['web'])->prefix('auth')->group(function () {
 
     Route::post('/logout', [AuthController::class, 'logout']);
 
+    Route::post('/email-booking-status', [AuthController::class, 'emailBookingStatus']);
+
     Route::post('/send-verification-code', [AuthController::class, 'sendEmailVerificationCode']);
 
     Route::post('/verify-email', [AuthController::class, 'verifyEmail']);
