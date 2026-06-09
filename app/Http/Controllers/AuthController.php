@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
 use App\Services\MailService;
@@ -140,10 +141,10 @@ class AuthController extends Controller
             'verificationUrl' => $verificationUrl,
         ])->render();
 
-        MailService::sendMail(
+        $this->dispatchVerificationMail(
             $user->email,
             "$tenant->name Email Verification",
-            $htmlBody,
+            $htmlBody
         );
 
         return response()->json([
@@ -387,10 +388,10 @@ class AuthController extends Controller
             'verificationUrl' => $verificationUrl,
         ])->render();
 
-        MailService::sendMail(
+        $this->dispatchVerificationMail(
             $user->email,
             ($tenant?->name ?? config('app.name')) . ' Email Verification',
-            $htmlBody,
+            $htmlBody
         );
 
         return response()->json([
@@ -406,6 +407,17 @@ class AuthController extends Controller
             'email' => ['required', 'email', 'max:190'],
             'name'  => ['nullable', 'string', 'max:100'],
         ]);
+
+        $existingUser = User::where('email', $validated['email'])->first();
+        if ($existingUser && $existingUser->account_state !== 'order_verified_only') {
+            return response()->json([
+                'ok' => false,
+                'requires_login' => true,
+                'account_exists' => true,
+                'account_state' => $existingUser->account_state,
+                'message' => 'This email is already registered. Please sign in to continue booking.',
+            ], 409);
+        }
 
         $user = DB::transaction(function () use ($validated) {
             $user = User::where('email', $validated['email'])->first();
@@ -455,15 +467,58 @@ class AuthController extends Controller
             'code' => implode(' ', str_split($user->verification_plain_code, 4)),
         ])->render();
 
-        MailService::sendMail(
+        $this->dispatchVerificationMail(
             $user->email,
             ($tenant?->name ?? config('app.name')) . ' Booking Verification',
-            $htmlBody,
+            $htmlBody
         );
 
         return response()->json([
             'ok' => true,
             'message' => 'Verification email sent.',
         ], 201);
+    }
+
+    public function emailBookingStatus(Request $request)
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'email', 'max:190'],
+        ]);
+
+        $user = User::where('email', $validated['email'])->first();
+        $requiresLogin = (bool) ($user && $user->account_state !== 'order_verified_only');
+
+        return response()->json([
+            'ok' => true,
+            'requires_login' => $requiresLogin,
+            'account_exists' => (bool) $user,
+            'account_state' => $user?->account_state,
+            'message' => $requiresLogin
+                ? 'This email is already registered. Please sign in to continue booking.'
+                : 'Email can be used for booking verification.',
+        ]);
+    }
+
+    private function dispatchVerificationMail(string $to, string $subject, string $htmlBody): void
+    {
+        dispatch(function () use ($to, $subject, $htmlBody) {
+            try {
+                $result = MailService::sendMail($to, $subject, $htmlBody);
+
+                if (!($result['ok'] ?? false)) {
+                    Log::error('Verification mail send failed.', [
+                        'to' => $to,
+                        'subject' => $subject,
+                        'error' => $result['message'] ?? 'Unknown mail error',
+                    ]);
+                }
+            } catch (\Throwable $exception) {
+                Log::error('Verification mail dispatch threw an exception.', [
+                    'to' => $to,
+                    'subject' => $subject,
+                    'error' => $exception->getMessage(),
+                ]);
+            }
+        })->afterResponse();
     }
 }
