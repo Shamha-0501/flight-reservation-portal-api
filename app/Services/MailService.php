@@ -26,6 +26,7 @@ class MailService
             $mail->Password   = env('MAIL_PASSWORD');
             $mail->SMTPSecure = env('MAIL_ENCRYPTION');
             $mail->Port       = env('MAIL_PORT');
+            $mail->Timeout    = (int) env('MAIL_TIMEOUT', 15);
 
             // Sender
             $mail->setFrom(
