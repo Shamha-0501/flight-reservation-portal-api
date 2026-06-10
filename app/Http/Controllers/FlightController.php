@@ -7,6 +7,7 @@ use App\Models\OrderAddon;
 use App\Models\Passenger;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Jobs\TransitionOrderCancellationStatusJob;
 use Illuminate\Http\Request;
 use App\Services\Duffel\DuffelService;
 use App\Services\MailService;
@@ -18,6 +19,10 @@ use Illuminate\Support\Facades\DB;
 class FlightController extends Controller
 {
     use FlightOfferFiltersTrait;
+
+    private const CANCELLATION_TO_CANCELLED_DELAY_SECONDS = 45;
+    private const CANCELLED_TO_REFUNDING_PENDING_DELAY_SECONDS = 60;
+    private const REFUNDING_PENDING_TO_REFUNDED_DELAY_SECONDS = 45;
 
     protected DuffelService $duffel;
 
@@ -588,18 +593,51 @@ class FlightController extends Controller
     public function confirmOrderCancellation(string $cancellationId, int $orderId)
     {
         try {
-            $result = response()->json($this->duffel->confirmOrderCancellation($cancellationId));
+            $result = $this->duffel->confirmOrderCancellation($cancellationId);
 
-            if ($result) {
-                Order::where('id', $orderId)->update(['status', 'Cancellation Requested']);
-            }
+            Order::where('id', $orderId)->update([
+                'status' => Order::STATUS_CANCELLATION_REQUESTED,
+            ]);
 
-            return $result;
+            $this->dispatchCancellationStatusTransitions($orderId);
+
+            return response()->json($result);
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Order cancellation confirmation failed',
                 'message' => $e->getMessage(),
             ], 500);
+        }
+    }
+
+    private function dispatchCancellationStatusTransitions(int $orderId): void
+    {
+        $timeline = [
+            [
+                'delay' => self::CANCELLATION_TO_CANCELLED_DELAY_SECONDS,
+                'expected' => Order::STATUS_CANCELLATION_REQUESTED,
+                'next' => Order::STATUS_CANCELLED,
+            ],
+            [
+                'delay' => self::CANCELLATION_TO_CANCELLED_DELAY_SECONDS + self::CANCELLED_TO_REFUNDING_PENDING_DELAY_SECONDS,
+                'expected' => Order::STATUS_CANCELLED,
+                'next' => Order::STATUS_REFUNDING_PENDING,
+            ],
+            [
+                'delay' => self::CANCELLATION_TO_CANCELLED_DELAY_SECONDS
+                    + self::CANCELLED_TO_REFUNDING_PENDING_DELAY_SECONDS
+                    + self::REFUNDING_PENDING_TO_REFUNDED_DELAY_SECONDS,
+                'expected' => Order::STATUS_REFUNDING_PENDING,
+                'next' => Order::STATUS_REFUNDED,
+            ],
+        ];
+
+        foreach ($timeline as $step) {
+            TransitionOrderCancellationStatusJob::dispatch(
+                $orderId,
+                $step['expected'],
+                $step['next']
+            )->delay(now()->addSeconds($step['delay']));
         }
     }
 
