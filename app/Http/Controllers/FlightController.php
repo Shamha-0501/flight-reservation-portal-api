@@ -389,7 +389,7 @@ class FlightController extends Controller
                     'duffel_order_id' => $duffelOrder['id'],
                     'booking_reference' => $duffelOrder['booking_reference'] ?? null,
                     'type' => $duffelOrder['type'] ?? 'instant',
-                    'status' => $duffelOrder['status'] ?? 'created',
+                    'status' => 'Booked',
 
                     'base_amount' => $duffelOrder['base_amount'] ?? $offer['base_amount'] ?? null,
                     'base_currency' => $duffelOrder['base_currency'] ?? $offer['base_currency'] ?? null,
@@ -541,6 +541,20 @@ class FlightController extends Controller
         }
     }
 
+    public function checkOrderRefundable(Request $request, int $orderId)
+    {
+        $order = Order::find($orderId);
+        $data = $order->meta;
+        return $data['duffel_order']['conditions']['refund_before_departure'];
+    }
+
+    public function checkOrderChangeable(Request $request, int $orderId)
+    {
+        $order = Order::find($orderId);
+        $data = $order->meta;
+        return $data['duffel_order']['conditions']['change_before_departure'];
+    }
+
     public function createOrderCancellation(Request $request)
     {
         try {
@@ -571,10 +585,16 @@ class FlightController extends Controller
         }
     }
 
-    public function confirmOrderCancellation(string $cancellationId)
+    public function confirmOrderCancellation(string $cancellationId, int $orderId)
     {
         try {
-            return response()->json($this->duffel->confirmOrderCancellation($cancellationId));
+            $result = response()->json($this->duffel->confirmOrderCancellation($cancellationId));
+
+            if ($result) {
+                Order::where('id', $orderId)->update(['status', 'Cancellation Requested']);
+            }
+
+            return $result;
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Order cancellation confirmation failed',

@@ -31,10 +31,12 @@ Route::post('/payment-intents', [FlightController::class, 'createPaymentIntent']
 Route::post('/payment-intents/{paymentIntentId}/confirm', [FlightController::class, 'confirmPaymentIntent']);
 Route::post('/orders', [FlightController::class, 'createOrder']);
 
+Route::get('/order-refundable-status/{orderId}', [FlightController::class, 'checkOrderRefundable']);
 Route::post('/order-cancellations', [FlightController::class, 'createOrderCancellation']);
 Route::get('/order-cancellations/{cancellationId}', [FlightController::class, 'getOrderCancellation']);
-Route::post('/order-cancellations/{cancellationId}/confirm', [FlightController::class, 'confirmOrderCancellation']);
+Route::post('/order-cancellations/{cancellationId}/confirm/{orderId}', [FlightController::class, 'confirmOrderCancellation']);
 
+Route::get('/order-changeable-status/{orderId}', [FlightController::class, 'checkOrderChangeable']);
 Route::post('/order-change-requests', [FlightController::class, 'createOrderChangeRequest']);
 Route::get('/order-change-requests/{orderChangeRequestId}', [FlightController::class, 'getOrderChangeRequest']);
 
