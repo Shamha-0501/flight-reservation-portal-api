@@ -22,7 +22,7 @@ Route::post('/flights/search', [FlightController::class, 'searchFlights']);
 Route::get('/offers', [FlightController::class, 'getOffers']);
 Route::get('/offers/{offerId}', [FlightController::class, 'getOffer']);
 
-Route::get('/orders', [FlightController::class, 'listOrders']);
+Route::get('/orders', [OrderController::class, 'index']);
 Route::get('/orders/{orderId}', [FlightController::class, 'getOrder']);
 Route::patch('/orders/{orderId}', [FlightController::class, 'updateOrder']);
 Route::get('/orders/{orderId}/available-services', [FlightController::class, 'getAvailableServices']);

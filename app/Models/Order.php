@@ -13,6 +13,12 @@ class Order extends Model
 
     protected $table = 'orders';
 
+    public const STATUS_BOOKED = 'Booked';
+    public const STATUS_CANCELLATION_REQUESTED = 'Cancellation Requested';
+    public const STATUS_CANCELLED = 'Cancelled';
+    public const STATUS_REFUNDING_PENDING = 'Refunding Pending';
+    public const STATUS_REFUNDED = 'Refunded';
+
     protected $fillable = [
         'tenant_id',
         'user_id',
