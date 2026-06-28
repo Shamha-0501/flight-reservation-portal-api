@@ -16,8 +16,20 @@ class Order extends Model
     public const STATUS_BOOKED = 'Booked';
     public const STATUS_CANCELLATION_REQUESTED = 'Cancellation Requested';
     public const STATUS_CANCELLED = 'Cancelled';
-    public const STATUS_REFUNDING_PENDING = 'Refunding Pending';
     public const STATUS_REFUNDED = 'Refunded';
+
+    public const CANCELLATION_STATUS_NONE = 'Not Cancelled';
+    public const CANCELLATION_STATUS_REQUESTED = 'Cancellation Requested';
+    public const CANCELLATION_STATUS_CANCELLED = 'Cancelled';
+
+    public const REFUND_STATUS_NONE = 'No Refund';
+    public const REFUND_STATUS_PENDING = 'Refund Pending';
+    public const REFUND_STATUS_UNKNOWN = 'Refund Unknown';
+    public const REFUND_STATUS_REFUNDED = 'Refunded';
+
+    public const CANCELLATION_FINAL_STATUSES = [
+        self::CANCELLATION_STATUS_CANCELLED,
+    ];
 
     protected $fillable = [
         'tenant_id',
@@ -26,6 +38,8 @@ class Order extends Model
         'booking_reference',
         'type',
         'status',
+        'cancellation_status',
+        'refund_status',
         'base_amount',
         'base_currency',
         'tax_amount',

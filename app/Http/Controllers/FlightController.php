@@ -7,22 +7,16 @@ use App\Models\OrderAddon;
 use App\Models\Passenger;
 use App\Models\Tenant;
 use App\Models\User;
-use App\Jobs\TransitionOrderCancellationStatusJob;
 use Illuminate\Http\Request;
 use App\Services\Duffel\DuffelService;
 use App\Services\MailService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class FlightController extends Controller
 {
     use FlightOfferFiltersTrait;
-
-    private const CANCELLATION_TO_CANCELLED_DELAY_SECONDS = 45;
-    private const CANCELLED_TO_REFUNDING_PENDING_DELAY_SECONDS = 60;
-    private const REFUNDING_PENDING_TO_REFUNDED_DELAY_SECONDS = 45;
 
     protected DuffelService $duffel;
 
@@ -395,6 +389,8 @@ class FlightController extends Controller
                     'booking_reference' => $duffelOrder['booking_reference'] ?? null,
                     'type' => $duffelOrder['type'] ?? 'instant',
                     'status' => 'Booked',
+                    'cancellation_status' => Order::CANCELLATION_STATUS_NONE,
+                    'refund_status' => null,
 
                     'base_amount' => $duffelOrder['base_amount'] ?? $offer['base_amount'] ?? null,
                     'base_currency' => $duffelOrder['base_currency'] ?? $offer['base_currency'] ?? null,
@@ -548,40 +544,82 @@ class FlightController extends Controller
 
     public function checkOrderRefundable(Request $request, int $orderId)
     {
-        $order = Order::find($orderId);
-        $data = $order->meta;
-        return $data['duffel_order']['conditions']['refund_before_departure'];
+        $order = Order::findOrFail($orderId);
+
+        return data_get($order->meta, 'duffel_order.conditions.refund_before_departure');
     }
 
     public function checkOrderChangeable(Request $request, int $orderId)
     {
-        $order = Order::find($orderId);
-        $data = $order->meta;
-        return $data['duffel_order']['conditions']['change_before_departure'];
+        $order = Order::findOrFail($orderId);
+
+        return data_get($order->meta, 'duffel_order.conditions.change_before_departure');
     }
 
     public function createOrderCancellation(Request $request)
     {
         try {
             $validated = $request->validate([
-                'order_id' => 'required|string',
+                'order_id' => 'required',
             ]);
 
-            return response()->json(
-                $this->duffel->createOrderCancellation($validated['order_id'])
-            );
+            $order = $this->resolveOrderForCancellation($validated['order_id']);
+            $validationError = $this->validateOrderCanBeCancelled($order);
+
+            if ($validationError) {
+                return $validationError;
+            }
+
+            $quoteResponse = $this->duffel->createOrderCancellation($order->duffel_order_id);
+            $quote = $quoteResponse['data'] ?? [];
+            $quoteSummary = $this->extractCancellationQuoteSummary($quoteResponse);
+
+            $order->update([
+                'status' => Order::STATUS_CANCELLATION_REQUESTED,
+                'cancellation_status' => Order::CANCELLATION_STATUS_REQUESTED,
+                'refund_status' => null,
+                'meta' => $this->mergeOrderMeta($order, [
+                    'cancellation' => array_filter([
+                        'cancellation_id' => $quote['id'] ?? null,
+                        'refund_amount' => $quoteSummary['refund_amount'],
+                        'refund_currency' => $quoteSummary['refund_currency'],
+                        'cancellation_fee' => $quoteSummary['cancellation_fee'],
+                        'cancellation_fee_currency' => $quoteSummary['cancellation_fee_currency'],
+                        'expires_at' => $quoteSummary['expires_at'],
+                        'warnings' => $quoteSummary['warnings'],
+                        'confirmed_at' => null,
+                        'quote_created_at' => now()->toISOString(),
+                        'cancellation_response' => $quoteResponse,
+                    ], fn($value) => $value !== null),
+                ]),
+            ]);
+
+            return response()->json([
+                'message' => 'Cancellation quote created successfully',
+                'order_id' => $order->id,
+                'duffel_order_id' => $order->duffel_order_id,
+                'data' => $quoteResponse['data'] ?? $quoteResponse,
+                'quote' => $quoteSummary,
+            ]);
         } catch (\Throwable $e) {
+            $status = str_contains($e->getMessage(), '422') ? 422 : 500;
+
             return response()->json([
                 'error' => 'Order cancellation quote failed',
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $status);
         }
     }
 
     public function getOrderCancellation(string $cancellationId)
     {
         try {
-            return response()->json($this->duffel->getOrderCancellation($cancellationId));
+            $response = $this->duffel->getOrderCancellation($cancellationId);
+
+            return response()->json([
+                'data' => $response['data'] ?? $response,
+                'quote' => $this->extractCancellationQuoteSummary($response),
+            ]);
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Failed to fetch order cancellation',
@@ -593,52 +631,249 @@ class FlightController extends Controller
     public function confirmOrderCancellation(string $cancellationId, int $orderId)
     {
         try {
-            $result = $this->duffel->confirmOrderCancellation($cancellationId);
+            $order = Order::findOrFail($orderId);
+            $validationError = $this->validateOrderCanBeCancelled($order);
 
-            Order::where('id', $orderId)->update([
-                'status' => Order::STATUS_CANCELLATION_REQUESTED,
+            if ($validationError) {
+                return $validationError;
+            }
+
+            $storedCancellation = data_get($order->meta, 'cancellation', []);
+
+            if (($storedCancellation['cancellation_id'] ?? null) !== $cancellationId) {
+                return response()->json([
+                    'error' => 'Cancellation quote mismatch',
+                    'message' => 'The provided cancellation quote does not belong to this order.',
+                ], 422);
+            }
+
+            if ($this->isCancellationQuoteExpired($storedCancellation['expires_at'] ?? null)) {
+                return response()->json([
+                    'error' => 'Cancellation quote expired',
+                    'message' => 'The cancellation quote has expired. Create a new quote before confirming.',
+                ], 422);
+            }
+
+            $latestCancellation = $this->duffel->getOrderCancellation($cancellationId);
+            $latestSummary = $this->extractCancellationQuoteSummary($latestCancellation);
+
+            if ($this->isCancellationQuoteExpired($latestSummary['expires_at'])) {
+                return response()->json([
+                    'error' => 'Cancellation quote expired',
+                    'message' => 'The cancellation quote has expired. Create a new quote before confirming.',
+                ], 422);
+            }
+
+            $result = $this->duffel->confirmOrderCancellation($cancellationId);
+            $confirmedSummary = $this->extractCancellationQuoteSummary($result);
+            [$status, $refundStatus] = $this->determineCancellationState($confirmedSummary['refund_amount']);
+
+            $order->update([
+                'status' => $status,
+                'cancellation_status' => Order::CANCELLATION_STATUS_CANCELLED,
+                'refund_status' => $refundStatus,
+                'meta' => $this->mergeOrderMeta($order, [
+                    'cancellation' => array_filter([
+                        'cancellation_id' => $cancellationId,
+                        'refund_amount' => $confirmedSummary['refund_amount'],
+                        'refund_currency' => $confirmedSummary['refund_currency'],
+                        'cancellation_fee' => $confirmedSummary['cancellation_fee'],
+                        'cancellation_fee_currency' => $confirmedSummary['cancellation_fee_currency'],
+                        'expires_at' => $confirmedSummary['expires_at'],
+                        'warnings' => $confirmedSummary['warnings'],
+                        'confirmed_at' => $confirmedSummary['confirmed_at'] ?? now()->toISOString(),
+                        'cancellation_response' => $result,
+                    ], fn($value) => $value !== null),
+                ]),
             ]);
 
-            $this->dispatchCancellationStatusTransitions($orderId);
-
-            return response()->json($result);
+            return response()->json([
+                'message' => 'Order cancellation confirmed successfully',
+                'order_id' => $order->id,
+                'status' => $status,
+                'cancellation_status' => Order::CANCELLATION_STATUS_CANCELLED,
+                'refund_status' => $refundStatus,
+                'data' => $result['data'] ?? $result,
+                'quote' => $confirmedSummary,
+            ]);
         } catch (\Throwable $e) {
+            $status = str_contains($e->getMessage(), '404') ? 404 : (str_contains($e->getMessage(), '422') ? 422 : 500);
+
             return response()->json([
                 'error' => 'Order cancellation confirmation failed',
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $status);
         }
     }
 
-    private function dispatchCancellationStatusTransitions(int $orderId): void
+    public function confirmOrderRefund(Request $request, int $orderId)
     {
-        $timeline = [
-            [
-                'delay' => self::CANCELLATION_TO_CANCELLED_DELAY_SECONDS,
-                'expected' => Order::STATUS_CANCELLATION_REQUESTED,
-                'next' => Order::STATUS_CANCELLED,
-            ],
-            [
-                'delay' => self::CANCELLATION_TO_CANCELLED_DELAY_SECONDS + self::CANCELLED_TO_REFUNDING_PENDING_DELAY_SECONDS,
-                'expected' => Order::STATUS_CANCELLED,
-                'next' => Order::STATUS_REFUNDING_PENDING,
-            ],
-            [
-                'delay' => self::CANCELLATION_TO_CANCELLED_DELAY_SECONDS
-                    + self::CANCELLED_TO_REFUNDING_PENDING_DELAY_SECONDS
-                    + self::REFUNDING_PENDING_TO_REFUNDED_DELAY_SECONDS,
-                'expected' => Order::STATUS_REFUNDING_PENDING,
-                'next' => Order::STATUS_REFUNDED,
-            ],
-        ];
+        try {
+            $validated = $request->validate([
+                'reference' => 'nullable|string|max:255',
+                'notes' => 'nullable|string',
+            ]);
 
-        foreach ($timeline as $step) {
-            TransitionOrderCancellationStatusJob::dispatch(
-                $orderId,
-                $step['expected'],
-                $step['next']
-            )->delay(now()->addSeconds($step['delay']));
+            $order = Order::findOrFail($orderId);
+            $cancellation = data_get($order->meta, 'cancellation', []);
+            $refundAmount = $this->normalizeDecimal($cancellation['refund_amount'] ?? null);
+
+            if ($refundAmount === null || (float) $refundAmount <= 0) {
+                return response()->json([
+                    'error' => 'Refund confirmation is not applicable',
+                    'message' => 'This cancelled booking does not have a refundable amount to confirm.',
+                ], 422);
+            }
+
+            if ($order->cancellation_status !== Order::CANCELLATION_STATUS_CANCELLED
+                || $order->refund_status !== Order::REFUND_STATUS_PENDING) {
+                return response()->json([
+                    'error' => 'Invalid refund state',
+                    'message' => 'Only cancelled bookings with pending refunds can be marked as refunded.',
+                ], 422);
+            }
+
+            $order->update([
+                'status' => Order::STATUS_REFUNDED,
+                'cancellation_status' => Order::CANCELLATION_STATUS_CANCELLED,
+                'refund_status' => Order::REFUND_STATUS_REFUNDED,
+                'meta' => $this->mergeOrderMeta($order, [
+                    'cancellation' => array_filter([
+                        'refund_confirmed_at' => now()->toISOString(),
+                        'refund_confirmation' => array_filter([
+                            'reference' => $validated['reference'] ?? null,
+                            'notes' => $validated['notes'] ?? null,
+                        ], fn($value) => $value !== null && $value !== ''),
+                    ], fn($value) => $value !== null && $value !== []),
+                ]),
+            ]);
+
+            return response()->json([
+                'message' => 'Refund confirmed successfully',
+                'order_id' => $order->id,
+                'status' => $order->fresh()->status,
+                'cancellation_status' => $order->fresh()->cancellation_status,
+                'refund_status' => $order->fresh()->refund_status,
+            ]);
+        } catch (\Throwable $e) {
+            $status = str_contains($e->getMessage(), '404') ? 404 : 500;
+
+            return response()->json([
+                'error' => 'Refund confirmation failed',
+                'message' => $e->getMessage(),
+            ], $status);
         }
+    }
+
+    private function resolveOrderForCancellation(string $orderReference): Order
+    {
+        $query = Order::query();
+
+        if (ctype_digit($orderReference)) {
+            $query->where('id', (int) $orderReference);
+        }
+
+        return $query
+            ->orWhere('duffel_order_id', $orderReference)
+            ->firstOrFail();
+    }
+
+    private function validateOrderCanBeCancelled(Order $order): ?\Illuminate\Http\JsonResponse
+    {
+        if ($order->cancellation_status === Order::CANCELLATION_STATUS_CANCELLED) {
+            return response()->json([
+                'error' => 'Order already cancelled',
+                'message' => 'This booking is already in a final cancellation state.',
+            ], 422);
+        }
+
+        $refundBeforeDeparture = data_get($order->meta, 'duffel_order.conditions.refund_before_departure');
+
+        if ($refundBeforeDeparture === false || data_get($refundBeforeDeparture, 'allowed') === false) {
+            return response()->json([
+                'error' => 'Order is not cancellable',
+                'message' => 'This booking cannot be cancelled based on the stored Duffel conditions.',
+            ], 422);
+        }
+
+        return null;
+    }
+
+    private function extractCancellationQuoteSummary(array $response): array
+    {
+        $data = $response['data'] ?? $response;
+        $warnings = data_get($data, 'warnings', $response['warnings'] ?? []);
+        $refundAmount = $this->normalizeDecimal(
+            data_get($data, 'refund_amount', data_get($data, 'refund.amount'))
+        );
+        $refundCurrency = data_get($data, 'refund_currency')
+            ?? data_get($data, 'refund.currency')
+            ?? data_get($data, 'currency');
+        $feeAmount = $this->normalizeDecimal(
+            data_get($data, 'cancellation_fee')
+            ?? data_get($data, 'fee_amount')
+            ?? data_get($data, 'fee.amount')
+        );
+        $feeCurrency = data_get($data, 'cancellation_fee_currency')
+            ?? data_get($data, 'fee_currency')
+            ?? data_get($data, 'fee.currency')
+            ?? $refundCurrency;
+
+        return [
+            'cancellation_id' => data_get($data, 'id'),
+            'refund_amount' => $refundAmount,
+            'refund_currency' => $refundCurrency,
+            'cancellation_fee' => $feeAmount,
+            'cancellation_fee_currency' => $feeCurrency,
+            'expires_at' => data_get($data, 'expires_at'),
+            'confirmed_at' => data_get($data, 'confirmed_at'),
+            'warnings' => is_array($warnings) ? $warnings : [$warnings],
+        ];
+    }
+
+    private function determineCancellationState(?string $refundAmount): array
+    {
+        if ($refundAmount === null) {
+            return [
+                Order::STATUS_CANCELLED,
+                Order::REFUND_STATUS_UNKNOWN,
+            ];
+        }
+
+        if ((float) $refundAmount > 0) {
+            return [
+                Order::STATUS_CANCELLED,
+                Order::REFUND_STATUS_PENDING,
+            ];
+        }
+
+        return [
+            Order::STATUS_CANCELLED,
+            Order::REFUND_STATUS_NONE,
+        ];
+    }
+
+    private function isCancellationQuoteExpired(?string $expiresAt): bool
+    {
+        if (!$expiresAt) {
+            return false;
+        }
+
+        return Carbon::parse($expiresAt)->isPast();
+    }
+
+    private function mergeOrderMeta(Order $order, array $attributes): array
+    {
+        return array_replace_recursive($order->meta ?? [], $attributes);
+    }
+
+    private function normalizeDecimal($value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return number_format((float) $value, 2, '.', '');
     }
 
     public function createOrderChangeRequest(Request $request)

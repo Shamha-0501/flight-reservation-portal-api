@@ -29,6 +29,8 @@ class OrderResource extends JsonResource
 
             'type' => $this->type,
             'status' => $this->status,
+            'cancellation_status' => $this->cancellation_status,
+            'refund_status' => $this->refund_status,
 
             'amounts' => [
                 'base' => [
@@ -71,6 +73,7 @@ class OrderResource extends JsonResource
             'meta' => [
                 'offer' => $this->meta['offer'] ?? null,
                 'duffel_order' => $this->meta['duffel_order'] ?? null,
+                'cancellation' => $this->meta['cancellation'] ?? null,
             ],
 
             'created_at' => $this->created_at,

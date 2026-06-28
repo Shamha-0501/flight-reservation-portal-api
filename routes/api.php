@@ -35,6 +35,7 @@ Route::get('/order-refundable-status/{orderId}', [FlightController::class, 'chec
 Route::post('/order-cancellations', [FlightController::class, 'createOrderCancellation']);
 Route::get('/order-cancellations/{cancellationId}', [FlightController::class, 'getOrderCancellation']);
 Route::post('/order-cancellations/{cancellationId}/confirm/{orderId}', [FlightController::class, 'confirmOrderCancellation']);
+Route::post('/orders/{orderId}/refunds/confirm', [FlightController::class, 'confirmOrderRefund']);
 
 Route::get('/order-changeable-status/{orderId}', [FlightController::class, 'checkOrderChangeable']);
 Route::post('/order-change-requests', [FlightController::class, 'createOrderChangeRequest']);
@@ -53,4 +54,3 @@ Route::prefix('bookings')->group(function () {
     Route::get('/', [OrderController::class, 'index']);
     Route::get('/{order}', [OrderController::class, 'show']);
 });
-

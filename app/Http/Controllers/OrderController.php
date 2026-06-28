@@ -15,6 +15,8 @@ class OrderController extends Controller
             'tenantKey' => ['required', 'string', 'exists:tenants,key'],
             'email' => ['nullable', 'email'],
             'status' => ['nullable', 'string'],
+            'cancellation_status' => ['nullable', 'string'],
+            'refund_status' => ['nullable', 'string'],
         ]);
 
         $tenant = Tenant::where('key', $validated['tenantKey'])->firstOrFail();
@@ -36,6 +38,14 @@ class OrderController extends Controller
 
         if (! empty($validated['status'])) {
             $query->where('status', $validated['status']);
+        }
+
+        if (! empty($validated['cancellation_status'])) {
+            $query->where('cancellation_status', $validated['cancellation_status']);
+        }
+
+        if (! empty($validated['refund_status'])) {
+            $query->where('refund_status', $validated['refund_status']);
         }
 
         return OrderResource::collection(
