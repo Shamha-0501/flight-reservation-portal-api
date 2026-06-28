@@ -21,12 +21,12 @@ class TenantUserSeeder extends Seeder
                 'role_id' => 1,
             ],
             [
-                'tenant_name' => 'AeroLink Agents',
+                'tenant_name' => 'SkyWay Travels',
                 'user_email' => 'farvees@gmail.com',
                 'role_id' => 3,
             ],
             [
-                'tenant_name' => 'Global Wings Agency',
+                'tenant_name' => 'SkyWay Travels',
                 'user_email' => 'test@gmail.com',
                 'role_id' => 4,
             ],
