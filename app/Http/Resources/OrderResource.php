@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Services\CurrencyConverter;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -34,16 +35,16 @@ class OrderResource extends JsonResource
 
             'amounts' => [
                 'base' => [
-                    'amount' => $this->base_amount,
-                    'currency' => $this->base_currency,
+                    'amount' => $this->moneyAmount('base_amount', 'base_currency'),
+                    'currency' => $this->currencyCode('base_currency'),
                 ],
                 'tax' => [
-                    'amount' => $this->tax_amount,
-                    'currency' => $this->tax_currency,
+                    'amount' => $this->moneyAmount('tax_amount', 'tax_currency'),
+                    'currency' => $this->currencyCode('tax_currency'),
                 ],
                 'total' => [
-                    'amount' => $this->total_amount,
-                    'currency' => $this->total_currency,
+                    'amount' => $this->moneyAmount('total_amount', 'total_currency'),
+                    'currency' => $this->currencyCode('total_currency'),
                 ],
             ],
 
@@ -67,17 +68,32 @@ class OrderResource extends JsonResource
             }),
 
             'addons' => $this->whenLoaded('addons', function () {
-                return $this->addons;
+                return $this->addons->map(function ($addon) {
+                    return app(CurrencyConverter::class)->convertPayload($addon->getAttributes());
+                });
             }),
 
             'meta' => [
-                'offer' => $this->meta['offer'] ?? null,
-                'duffel_order' => $this->meta['duffel_order'] ?? null,
-                'cancellation' => $this->meta['cancellation'] ?? null,
+                'offer' => app(CurrencyConverter::class)->convertPayload($this->meta['offer'] ?? null),
+                'duffel_order' => app(CurrencyConverter::class)->convertPayload($this->meta['duffel_order'] ?? null),
+                'cancellation' => app(CurrencyConverter::class)->convertPayload($this->meta['cancellation'] ?? null),
             ],
 
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
+    }
+
+    private function moneyAmount(string $amountKey, string $currencyKey): ?string
+    {
+        $amount = $this->getRawOriginal($amountKey) ?? $this->{$amountKey};
+        $currency = $this->currencyCode($currencyKey);
+
+        return app(CurrencyConverter::class)->convertAmount($amount, $currency);
+    }
+
+    private function currencyCode(string $currencyKey): string
+    {
+        return config('finance.default_currency', 'LKR');
     }
 }

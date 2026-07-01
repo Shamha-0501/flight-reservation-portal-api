@@ -67,6 +67,9 @@ trait FlightOfferFiltersTrait
             'baggage' => $baggage,
         ];
 
+        $offer = $this->imposeDefaultCurrency($offer);
+        $offer['computed']['grandTotal'] = (float) ($offer['total_amount'] ?? $offer['computed']['grandTotal'] ?? 0);
+
         return $offer;
     }
 
@@ -504,7 +507,7 @@ trait FlightOfferFiltersTrait
             'label' => $label,
             'price' => [
                 'amount' => $c['grandTotal'] ?? 0,
-                'currency' => $offer['total_currency'] ?? null,
+                'currency' => $this->defaultCurrency(),
             ],
             'duration' => [
                 'minutes' => $c['totalDurationMinutes'] ?? 0,
@@ -598,5 +601,14 @@ trait FlightOfferFiltersTrait
         }
 
         return 'view_only'; // seat map exists but no selectable seats
+    }
+    private function defaultCurrency(): string
+    {
+        return $this->currencyConverter->defaultCurrency();
+    }
+
+    private function imposeDefaultCurrency(mixed $value): mixed
+    {
+        return $this->currencyConverter->convertPayload($value);
     }
 }

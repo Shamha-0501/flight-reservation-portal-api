@@ -7,6 +7,7 @@ use App\Models\OrderAddon;
 use App\Models\Passenger;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\CurrencyConverter;
 use Illuminate\Http\Request;
 use App\Services\Duffel\DuffelService;
 use App\Services\MailService;
@@ -19,10 +20,12 @@ class FlightController extends Controller
     use FlightOfferFiltersTrait;
 
     protected DuffelService $duffel;
+    protected CurrencyConverter $currencyConverter;
 
-    public function __construct(DuffelService $duffel)
+    public function __construct(DuffelService $duffel, CurrencyConverter $currencyConverter)
     {
         $this->duffel = $duffel;
+        $this->currencyConverter = $currencyConverter;
     }
 
     public function searchPlaces(Request $request)
@@ -205,8 +208,7 @@ class FlightController extends Controller
                     'total_received' => count($allOffers),
                     'expired_removed' => $expiredRemoved,
                     'valid_count' => count($offers),
-                    'currency' => $filtered[0]['total_currency']
-                        ?? ($normalizedAll[0]['total_currency'] ?? null),
+                    'currency' => $this->defaultCurrency(),
                     'appliedFilters' => $appliedFilters,
                     'ranges' => $ranges,
                     'facets' => $facets,
@@ -249,7 +251,7 @@ class FlightController extends Controller
             $seatMapStatus = $this->determineSeatMapStatus($seatMaps);
 
             return response()->json([
-                'offer' => $offer,
+                'offer' => $this->imposeDefaultCurrency($offer),
                 'seat_map_status' => $seatMapStatus
             ]);
         } catch (\Throwable $e) {
@@ -281,7 +283,7 @@ class FlightController extends Controller
                 'currency' => $offer['total_currency'],
             ]);
 
-            return response()->json($paymentIntent);
+            return response()->json($this->imposeDefaultCurrency($paymentIntent));
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'error' => 'Validation failed',
@@ -300,7 +302,7 @@ class FlightController extends Controller
         try {
             $paymentIntent = $this->duffel->confirmPaymentIntent($paymentIntentId);
 
-            return response()->json($paymentIntent);
+            return response()->json($this->imposeDefaultCurrency($paymentIntent));
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Payment intent confirmation failed',
@@ -392,14 +394,23 @@ class FlightController extends Controller
                     'cancellation_status' => Order::CANCELLATION_STATUS_NONE,
                     'refund_status' => null,
 
-                    'base_amount' => $duffelOrder['base_amount'] ?? $offer['base_amount'] ?? null,
-                    'base_currency' => $duffelOrder['base_currency'] ?? $offer['base_currency'] ?? null,
+                    'base_amount' => $this->convertMoneyAmount(
+                        $duffelOrder['base_amount'] ?? $offer['base_amount'] ?? null,
+                        $duffelOrder['base_currency'] ?? $offer['base_currency'] ?? null
+                    ),
+                    'base_currency' => $this->defaultCurrency(),
 
-                    'tax_amount' => $duffelOrder['tax_amount'] ?? $offer['tax_amount'] ?? null,
-                    'tax_currency' => $duffelOrder['tax_currency'] ?? $offer['tax_currency'] ?? null,
+                    'tax_amount' => $this->convertMoneyAmount(
+                        $duffelOrder['tax_amount'] ?? $offer['tax_amount'] ?? null,
+                        $duffelOrder['tax_currency'] ?? $offer['tax_currency'] ?? null
+                    ),
+                    'tax_currency' => $this->defaultCurrency(),
 
-                    'total_amount' => $duffelOrder['total_amount'] ?? $offer['total_amount'] ?? null,
-                    'total_currency' => $duffelOrder['total_currency'] ?? $offer['total_currency'] ?? null,
+                    'total_amount' => $this->convertMoneyAmount(
+                        $duffelOrder['total_amount'] ?? $offer['total_amount'] ?? null,
+                        $duffelOrder['total_currency'] ?? $offer['total_currency'] ?? null
+                    ),
+                    'total_currency' => $this->defaultCurrency(),
 
                     'synced_at' => now(),
                     'void_window_ends_at' => $duffelOrder['void_window_ends_at'] ?? null,
@@ -434,11 +445,13 @@ class FlightController extends Controller
                 }
 
                 if (!empty($validated['addons'])) {
+                    $addons = $this->currencyConverter->convertPayload($validated['addons']);
+
                     OrderAddon::create(array_merge([
                         'tenant_id' => $order->tenant_id,
                         'order_id' => $order->id,
-                        'currency' => $order->total_currency,
-                    ], $validated['addons']));
+                        'currency' => $this->defaultCurrency(),
+                    ], $addons));
                 }
 
                 $pdf = Pdf::loadView('pdf.order-reference', [
@@ -462,8 +475,8 @@ class FlightController extends Controller
 
                 return response()->json([
                     'message' => 'Order created successfully',
-                    'order' => $order->load('passengers'),
-                    'duffel_order' => $duffelOrder,
+                    'order' => \App\Http\Resources\OrderResource::make($order->load('passengers'))->resolve(),
+                    'duffel_order' => $this->imposeDefaultCurrency($duffelOrder),
                 ]);
             });
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -486,7 +499,7 @@ class FlightController extends Controller
         try {
             $order = $this->duffel->getOrder($orderId);
 
-            return response()->json($order);
+            return response()->json($this->imposeDefaultCurrency($order));
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Failed to fetch order',
@@ -503,7 +516,7 @@ class FlightController extends Controller
                 'passengers' => 'nullable|array',
             ]);
 
-            return response()->json($this->duffel->updateOrder($orderId, $validated));
+            return response()->json($this->imposeDefaultCurrency($this->duffel->updateOrder($orderId, $validated)));
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Order update failed',
@@ -515,7 +528,7 @@ class FlightController extends Controller
     public function getAvailableServices(string $orderId)
     {
         try {
-            return response()->json($this->duffel->getAvailableServices($orderId));
+            return response()->json($this->imposeDefaultCurrency($this->duffel->getAvailableServices($orderId)));
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Failed to fetch available services',
@@ -532,7 +545,7 @@ class FlightController extends Controller
             ]);
 
             return response()->json(
-                $this->duffel->getSeatMaps($validated['offer_id'])
+                $this->imposeDefaultCurrency($this->duffel->getSeatMaps($validated['offer_id']))
             );
         } catch (\Throwable $e) {
             return response()->json([
@@ -598,8 +611,8 @@ class FlightController extends Controller
                 'message' => 'Cancellation quote created successfully',
                 'order_id' => $order->id,
                 'duffel_order_id' => $order->duffel_order_id,
-                'data' => $quoteResponse['data'] ?? $quoteResponse,
-                'quote' => $quoteSummary,
+                'data' => $this->imposeDefaultCurrency($quoteResponse['data'] ?? $quoteResponse),
+                'quote' => $this->imposeDefaultCurrency($quoteSummary),
             ]);
         } catch (\Throwable $e) {
             $status = str_contains($e->getMessage(), '422') ? 422 : 500;
@@ -617,8 +630,8 @@ class FlightController extends Controller
             $response = $this->duffel->getOrderCancellation($cancellationId);
 
             return response()->json([
-                'data' => $response['data'] ?? $response,
-                'quote' => $this->extractCancellationQuoteSummary($response),
+                'data' => $this->imposeDefaultCurrency($response['data'] ?? $response),
+                'quote' => $this->imposeDefaultCurrency($this->extractCancellationQuoteSummary($response)),
             ]);
         } catch (\Throwable $e) {
             return response()->json([
@@ -693,8 +706,8 @@ class FlightController extends Controller
                 'status' => $status,
                 'cancellation_status' => Order::CANCELLATION_STATUS_CANCELLED,
                 'refund_status' => $refundStatus,
-                'data' => $result['data'] ?? $result,
-                'quote' => $confirmedSummary,
+                'data' => $this->imposeDefaultCurrency($result['data'] ?? $result),
+                'quote' => $this->imposeDefaultCurrency($confirmedSummary),
             ]);
         } catch (\Throwable $e) {
             $status = str_contains($e->getMessage(), '404') ? 404 : (str_contains($e->getMessage(), '422') ? 422 : 500);
@@ -803,32 +816,28 @@ class FlightController extends Controller
     {
         $data = $response['data'] ?? $response;
         $warnings = data_get($data, 'warnings', $response['warnings'] ?? []);
-        $refundAmount = $this->normalizeDecimal(
-            data_get($data, 'refund_amount', data_get($data, 'refund.amount'))
-        );
-        $refundCurrency = data_get($data, 'refund_currency')
-            ?? data_get($data, 'refund.currency')
-            ?? data_get($data, 'currency');
-        $feeAmount = $this->normalizeDecimal(
-            data_get($data, 'cancellation_fee')
-            ?? data_get($data, 'fee_amount')
-            ?? data_get($data, 'fee.amount')
-        );
-        $feeCurrency = data_get($data, 'cancellation_fee_currency')
-            ?? data_get($data, 'fee_currency')
-            ?? data_get($data, 'fee.currency')
-            ?? $refundCurrency;
-
-        return [
+        return $this->currencyConverter->convertPayload([
             'cancellation_id' => data_get($data, 'id'),
-            'refund_amount' => $refundAmount,
-            'refund_currency' => $refundCurrency,
-            'cancellation_fee' => $feeAmount,
-            'cancellation_fee_currency' => $feeCurrency,
+            'refund_amount' => $this->normalizeDecimal(
+                data_get($data, 'refund_amount', data_get($data, 'refund.amount'))
+            ),
+            'refund_currency' => data_get($data, 'refund_currency')
+                ?? data_get($data, 'refund.currency')
+                ?? data_get($data, 'currency'),
+            'cancellation_fee' => $this->normalizeDecimal(
+                data_get($data, 'cancellation_fee')
+                ?? data_get($data, 'fee_amount')
+                ?? data_get($data, 'fee.amount')
+            ),
+            'cancellation_fee_currency' => data_get($data, 'cancellation_fee_currency')
+                ?? data_get($data, 'fee_currency')
+                ?? data_get($data, 'fee.currency')
+                ?? data_get($data, 'refund_currency')
+                ?? data_get($data, 'currency'),
             'expires_at' => data_get($data, 'expires_at'),
             'confirmed_at' => data_get($data, 'confirmed_at'),
             'warnings' => is_array($warnings) ? $warnings : [$warnings],
-        ];
+        ]);
     }
 
     private function determineCancellationState(?string $refundAmount): array
@@ -867,6 +876,21 @@ class FlightController extends Controller
         return array_replace_recursive($order->meta ?? [], $attributes);
     }
 
+    private function convertMoneyAmount($amount, ?string $currency): ?string
+    {
+        return $this->currencyConverter->convertAmount($amount, $currency);
+    }
+
+    private function defaultCurrency(): string
+    {
+        return $this->currencyConverter->defaultCurrency();
+    }
+
+    private function imposeDefaultCurrency(mixed $value): mixed
+    {
+        return $this->currencyConverter->convertPayload($value);
+    }
+
     private function normalizeDecimal($value): ?string
     {
         if ($value === null || $value === '') {
@@ -891,7 +915,7 @@ class FlightController extends Controller
                 'slices.add.*.cabin_class' => 'nullable|string',
             ]);
 
-            return response()->json($this->duffel->createOrderChangeRequest($validated));
+            return response()->json($this->imposeDefaultCurrency($this->duffel->createOrderChangeRequest($validated)));
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Order change request failed',
@@ -904,7 +928,7 @@ class FlightController extends Controller
     {
         try {
             return response()->json(
-                $this->duffel->getOrderChangeRequest($orderChangeRequestId)
+                $this->imposeDefaultCurrency($this->duffel->getOrderChangeRequest($orderChangeRequestId))
             );
         } catch (\Throwable $e) {
             return response()->json([
@@ -918,7 +942,7 @@ class FlightController extends Controller
     {
         try {
             return response()->json(
-                $this->duffel->getOrderChangeOffer($orderChangeOfferId)
+                $this->imposeDefaultCurrency($this->duffel->getOrderChangeOffer($orderChangeOfferId))
             );
         } catch (\Throwable $e) {
             return response()->json([
@@ -935,7 +959,7 @@ class FlightController extends Controller
                 'selected_order_change_offer' => 'required|string',
             ]);
 
-            return response()->json($this->duffel->createOrderChange($validated));
+            return response()->json($this->imposeDefaultCurrency($this->duffel->createOrderChange($validated)));
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Order change creation failed',
@@ -947,7 +971,7 @@ class FlightController extends Controller
     public function getOrderChange(string $orderChangeId)
     {
         try {
-            return response()->json($this->duffel->getOrderChange($orderChangeId));
+            return response()->json($this->imposeDefaultCurrency($this->duffel->getOrderChange($orderChangeId)));
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Failed to fetch order change',
@@ -964,7 +988,7 @@ class FlightController extends Controller
             ]);
 
             return response()->json(
-                $this->duffel->confirmOrderChange($orderChangeId, $validated)
+                $this->imposeDefaultCurrency($this->duffel->confirmOrderChange($orderChangeId, $validated))
             );
         } catch (\Throwable $e) {
             return response()->json([

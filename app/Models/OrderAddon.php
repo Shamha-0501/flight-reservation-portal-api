@@ -83,4 +83,9 @@ class OrderAddon extends Model
         'duffel_addons_amount' => 'decimal:2',
         'total_addons_amount' => 'decimal:2',
     ];
+
+    public function getCurrencyAttribute($value): string
+    {
+        return $value ?: config('finance.default_currency', 'LKR');
+    }
 }

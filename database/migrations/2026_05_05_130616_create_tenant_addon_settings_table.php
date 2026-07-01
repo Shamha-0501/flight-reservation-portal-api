@@ -89,7 +89,7 @@ return new class extends Migration
             |--------------------------------------------------------------------------
             */
 
-            $table->char('currency', 3)->default('USD');
+            $table->char('currency', 3)->default('LKR');
 
             $table->timestamps();
 

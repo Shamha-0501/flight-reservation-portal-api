@@ -60,6 +60,21 @@ class Order extends Model
         'meta' => 'array',
     ];
 
+    public function getBaseCurrencyAttribute($value): string
+    {
+        return $value ?: config('finance.default_currency', 'LKR');
+    }
+
+    public function getTaxCurrencyAttribute($value): string
+    {
+        return $value ?: config('finance.default_currency', 'LKR');
+    }
+
+    public function getTotalCurrencyAttribute($value): string
+    {
+        return $value ?: config('finance.default_currency', 'LKR');
+    }
+
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use App\Services\CurrencyConverter;
 
 class TenantAddonSetting extends Model
 {
@@ -105,6 +106,11 @@ class TenantAddonSetting extends Model
         'priority_boarding_price' => 'decimal:2',
     ];
 
+    public function getCurrencyAttribute($value): string
+    {
+        return $value ?: config('finance.default_currency', 'LKR');
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Relationships
@@ -119,13 +125,15 @@ class TenantAddonSetting extends Model
     public function calculateTotal(array $selected): float
     {
         $total = 0;
+        $currency = $this->getRawOriginal('currency') ?? config('finance.default_currency', 'LKR');
+        $converter = app(CurrencyConverter::class);
 
         foreach ($selected as $key) {
             $priceField = "{$key}_price";
             $enabledField = "{$key}_enabled";
 
             if ($this->$enabledField && $this->$priceField) {
-                $total += $this->$priceField;
+                $total += (float) $converter->convertAmount($this->getRawOriginal($priceField) ?? $this->$priceField, $currency);
             }
         }
 
