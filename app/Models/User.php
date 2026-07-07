@@ -6,6 +6,7 @@ namespace App\Models;
 
 use App\Services\Pbac\PbacEvaluator;
 use App\Services\Pbac\PbacPolicyLoader;
+use App\Support\RoleCatalog;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -59,7 +60,10 @@ class User extends Authenticatable
             ->withPivot([
                 'role_id',
                 'invited_by_user_id',
+                'status',
                 'deleted_at',
+                'created_at',
+                'updated_at',
             ])
             ->withTimestamps();
     }
@@ -75,9 +79,52 @@ class User extends Authenticatable
         return Tenant::query()
             ->where('key', $tenantKey)
             ->whereHas('users', function ($q) {
-                $q->where('tenant_user.user_id', $this->id); // <-- pivot filter
+                $q->where('tenant_user.user_id', $this->id)
+                    ->whereNull('tenant_user.deleted_at')
+                    ->where('tenant_user.status', 'active');
             })
             ->first();
+    }
+
+    public function hasAnyRole(array $roles): bool
+    {
+        $roles = array_values(array_filter(array_map(
+            static fn ($role) => RoleCatalog::normalize(is_string($role) ? $role : null),
+            $roles
+        )));
+
+        if ($roles === []) {
+            return false;
+        }
+
+        return $this->tenants()
+            ->whereNull('tenant_user.deleted_at')
+            ->wherePivot('status', 'active')
+            ->get()
+            ->contains(function (Tenant $tenant) use ($roles) {
+                $roleKey = Role::query()
+                    ->whereKey($tenant->pivot?->role_id)
+                    ->value('key');
+
+                return $roleKey !== null && in_array($roleKey, $roles, true);
+            });
+    }
+
+    public function primaryTenant(): ?Tenant
+    {
+        $tenants = $this->tenants()
+            ->whereNull('tenant_user.deleted_at')
+            ->wherePivot('status', 'active')
+            ->get();
+
+        if ($tenants->isEmpty()) {
+            return null;
+        }
+
+        return $tenants->sortBy(fn (Tenant $tenant) => RoleCatalog::membershipPriority(
+            Role::query()->whereKey($tenant->pivot?->role_id)->value('key'),
+            $tenant->status
+        ))->first();
     }
 
     /**
@@ -87,11 +134,24 @@ class User extends Authenticatable
      */
     public function getRole()
     {
-        $userRole = UserRole::with('role:id,key')
-            ->where('user_id', $this->id)
-            ->first();
-        
-        return $userRole?->role?->key;
+        return $this->primaryRoleKey();
+    }
+
+    public function primaryRoleKey(): ?string
+    {
+        $roles = $this->tenants()
+            ->whereNull('tenant_user.deleted_at')
+            ->get()
+            ->map(function (Tenant $tenant) {
+                return [
+                    'role' => Role::query()->whereKey($tenant->pivot?->role_id)->value('key'),
+                    'status' => $tenant->status,
+                ];
+            })
+            ->sortBy(fn (array $membership) => RoleCatalog::membershipPriority($membership['role'], $membership['status']))
+            ->values();
+
+        return $roles->first()['role'] ?? null;
     }
 
     /**
@@ -102,7 +162,7 @@ class User extends Authenticatable
      */
     public function canAccessAdminPortal()
     {
-        return in_array($this->getRole(), config('app.system_roles'), true);
+        return RoleCatalog::isPlatformRole($this->getRole());
     }
 
     /**
@@ -112,7 +172,7 @@ class User extends Authenticatable
      */
     public function isBypassRole()
     {
-        return in_array($this->getRole(), config('app.bypass_role'));
+        return $this->canAccessAdminPortal();
     }
 
     /**
@@ -133,17 +193,13 @@ class User extends Authenticatable
      */
     public function getActiveRoleIds(?int $tenantId) 
     {
-        return UserRole::query()
-            ->where('user_id', $this->id)
+        return $this->tenants()
+            ->whereNull('tenant_user.deleted_at')
             ->when(
-                $tenantId, 
-                fn($q) => $q->where(function($qq) use ($tenantId) {
-                    $qq->whereNull('tenant_id')
-                        ->orWhere('tenant_id', $tenantId);
-                }),
-                fn($q) => $q->whereNull('tenant_id')
+                $tenantId,
+                fn($q) => $q->where('tenants.id', $tenantId)
             )
-            ->pluck('role_id')
+            ->pluck('tenant_user.role_id')
             ->unique()
             ->values()
             ->all();
@@ -164,7 +220,7 @@ class User extends Authenticatable
         if (!$permission) return false;
 
         // 4) Load tenant
-        $tenant = $this->getTenantByKey($env['tenant_key']);
+        $tenant = $this->getTenantByKey($env['tenant_key'] ?? '');
         $tenantId = $tenant?->id;
 
         // 3) Get active roles for this tenant / global(if user not in tenant context)

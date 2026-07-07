@@ -18,6 +18,7 @@ class TenantUser extends Pivot
         'user_id',
         'role_id',
         'invited_by_user_id',
+        'status',
     ];
 
     protected $dates = [
@@ -26,6 +27,21 @@ class TenantUser extends Pivot
 
     public function role(): BelongsTo
     {
-        return $this->belongsTo(UserRole::class, 'role_id');
+        return $this->belongsTo(Role::class, 'role_id');
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function inviter(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'invited_by_user_id');
+    }
+
+    public function tenant(): BelongsTo
+    {
+        return $this->belongsTo(Tenant::class);
     }
 }
