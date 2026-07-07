@@ -11,6 +11,7 @@ class TenantController extends Controller
     public function getActiveTenants(Request $request)
     {
         $tenants = Tenant::where('status', 'active')
+            ->withCount('users')
             ->latest()
             ->get();
 
