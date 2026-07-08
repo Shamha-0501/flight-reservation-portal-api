@@ -1,16 +1,19 @@
 <?php
 
-use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ActivityLogController;
-use App\Http\Controllers\CompanyController;
+use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
+use App\Http\Controllers\Admin\ReportController as AdminReportController;
+use App\Http\Controllers\Admin\SettingsController as AdminSettingsController;
 use App\Http\Controllers\Admin\TenantApprovalController;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\CompanyController;
 use App\Http\Controllers\FlightController;
 use App\Http\Controllers\OrderController;
-use App\Http\Controllers\TenantDashboardController;
-use App\Http\Controllers\TenantCustomerController;
-use App\Http\Controllers\TenantMemberController;
 use App\Http\Controllers\TenantAddonSettingController;
 use App\Http\Controllers\TenantController;
+use App\Http\Controllers\TenantCustomerController;
+use App\Http\Controllers\TenantDashboardController;
+use App\Http\Controllers\TenantMemberController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('auth:sanctum')->get('/me', [AuthController::class, 'me']);
@@ -62,18 +65,26 @@ Route::middleware(['auth:sanctum'])->group(function () {
         ->middleware('workspace.access');
 
     Route::prefix('admin')->middleware('role:system_developer,super_admin')->group(function () {
+        Route::get('/dashboard', [AdminDashboardController::class, 'index']);
+        Route::get('/activities', [ActivityLogController::class, 'adminIndex']);
+        Route::get('/reports', [AdminReportController::class, 'index']);
+        Route::get('/reports/export', [AdminReportController::class, 'export']);
+        Route::get('/settings', [AdminSettingsController::class, 'platform']);
+        Route::patch('/settings', [AdminSettingsController::class, 'updatePlatform']);
         Route::get('/tenants/pending', [TenantApprovalController::class, 'pending']);
         Route::post('/tenants/{tenant}/approve', [TenantApprovalController::class, 'approve']);
         Route::post('/tenants/{tenant}/reject', [TenantApprovalController::class, 'reject']);
         Route::post('/tenants/{tenant}/suspend', [TenantApprovalController::class, 'suspend']);
         Route::post('/tenants/{tenant}/reactivate', [TenantApprovalController::class, 'reactivate']);
-        Route::get('/activities', [ActivityLogController::class, 'adminIndex']);
     });
 
     Route::prefix('tenants')->middleware('workspace.access')->group(function () {
         Route::get('/dashboard', [TenantDashboardController::class, 'index']);
         Route::get('/activities', [ActivityLogController::class, 'tenantIndex']);
         Route::get('/customers', [TenantCustomerController::class, 'index']);
+        Route::get('/settings', [AdminSettingsController::class, 'tenant']);
+        Route::patch('/settings', [AdminSettingsController::class, 'updateTenant'])
+            ->middleware('role:tenant_owner');
         Route::get('/members', [TenantMemberController::class, 'index'])
             ->middleware('role:tenant_owner,tenant_admin');
         Route::post('/members/invite', [TenantMemberController::class, 'invite'])
