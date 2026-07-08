@@ -379,7 +379,7 @@ class FlightController extends Controller
 
                 $duffelOrderResponse = $this->duffel->createOrder($payload);
                 $duffelOrder = $duffelOrderResponse['data'] ?? $duffelOrderResponse;
-
+                logger()->info("stage-1");
                 if (!is_array($duffelOrder) || empty($duffelOrder['id'])) {
                     throw new \Exception('Invalid Duffel order response');
                 }
@@ -427,6 +427,7 @@ class FlightController extends Controller
                         'duffel_order' => $duffelOrder,
                     ],
                 ]);
+                logger()->info("stage-2");
 
                 foreach ($validated['passengers'] as $passengerData) {
                     Passenger::create([
@@ -450,6 +451,7 @@ class FlightController extends Controller
                         ],
                     ]);
                 }
+                logger()->info("stage-3");
 
                 $this->activityLogger->log(
                     action: 'order.created',
@@ -469,6 +471,7 @@ class FlightController extends Controller
                         'currency' => $order->total_currency,
                     ],
                 );
+                logger()->info("stage-4");
 
                 if (!empty($validated['addons'])) {
                     $addons = $this->currencyConverter->convertPayload($validated['addons']);
@@ -1188,46 +1191,22 @@ class FlightController extends Controller
         try {
             $validated = $request->validate([
                 'payment' => 'nullable|array',
+                'payment.type' => 'required_with:payment|string',
+                'payment.amount' => 'required_with:payment|string',
+                'payment.currency' => 'required_with:payment|string|size:3',
             ]);
-            $response = $this->duffel->confirmOrderChange($orderChangeId, $validated);
-            $data = $response['data'] ?? $response;
-            $order = $this->resolveLocalOrder((string) (
-                data_get($data, 'order_id')
-                ?? data_get($data, 'order.id')
-                ?? data_get($data, 'updated_order.id')
-                ?? data_get($data, 'order.data.id')
-            ));
 
-            if ($order) {
-                $order->forceFill([
-                    'status' => Order::STATUS_BOOKED,
-                ])->save();
+            $payload = [];
 
-                $this->updateOrderChangeMeta($order, [
-                    'order_change_id' => $orderChangeId,
-                    'status' => 'confirmed',
-                    'confirmed_at' => now()->toISOString(),
-                    'confirmation_response' => $response,
-                ]);
-
-                $this->activityLogger->log(
-                    action: 'order.change_confirmed',
-                    request: $request,
-                    tenant: $order->tenant,
-                    actor: $request->user(),
-                    subject: $order,
-                    title: 'Reschedule confirmed',
-                    description: "A reschedule change was confirmed for booking {$order->booking_reference}.",
-                    category: 'order',
-                    properties: [
-                        'order_id' => $order->id,
-                        'booking_reference' => $order->booking_reference,
-                        'order_change_id' => $orderChangeId,
-                    ],
-                );
+            if (!empty($validated['payment'])) {
+                $payload['payment'] = $validated['payment'];
             }
 
-            return response()->json($this->imposeDefaultCurrency($response));
+            return response()->json(
+                $this->imposeDefaultCurrency(
+                    $this->duffel->confirmOrderChange($orderChangeId, $payload)
+                )
+            );
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Order change confirmation failed',

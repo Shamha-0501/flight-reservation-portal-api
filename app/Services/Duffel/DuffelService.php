@@ -261,15 +261,11 @@ class DuffelService
         return $this->client->get("/air/order_changes/{$orderChangeId}");
     }
 
-    public function confirmOrderChange(string $orderChangeId, array $payment = []): array
+    public function confirmOrderChange(string $orderChangeId, array $payload = []): array
     {
-        $body = empty($payment) ? [] : [
-            'data' => [
-                'payment' => $payment,
-            ],
-        ];
-
-        return $this->client->post("/air/order_changes/{$orderChangeId}/actions/confirm", $body);
+        return $this->client->post("/air/order_changes/{$orderChangeId}/actions/confirm", [
+            'data' => empty($payload) ? (object) [] : $payload,
+        ]);
     }
 
     public function getSeatMaps(string $offerId): array
