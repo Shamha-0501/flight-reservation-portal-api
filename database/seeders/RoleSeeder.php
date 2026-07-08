@@ -13,6 +13,7 @@ class RoleSeeder extends Seeder
      */
     public function run(): void
     {
+        // Keep the backend role catalog aligned with the frontend auth model.
         $roles = [
             [
                 'tenant_id' => null,
@@ -48,6 +49,22 @@ class RoleSeeder extends Seeder
             ],
             [
                 'tenant_id' => null,
+                'key' => 'agency_manager',
+                'name' => 'Agency Manager',
+                'scope' => 'tenant',
+                'is_external' => false,
+                'description' => 'Manages the agency workspace and team operations'
+            ],
+            [
+                'tenant_id' => null,
+                'key' => 'agency_staff',
+                'name' => 'Agency Staff',
+                'scope' => 'tenant',
+                'is_external' => false,
+                'description' => 'Handles agency workspace tasks and bookings'
+            ],
+            [
+                'tenant_id' => null,
                 'key' => 'customer',
                 'name' => 'Customer',
                 'scope' => 'tenant',
@@ -56,15 +73,19 @@ class RoleSeeder extends Seeder
             ]
         ];
 
-        $now = now();
-
-        $roles = array_map(function ($role) use ($now) {
-            return array_merge($role, [
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-        }, $roles);
-
-        Role::insert($roles);
+        foreach ($roles as $role) {
+            Role::query()->updateOrCreate(
+                [
+                    'tenant_id' => null,
+                    'key' => $role['key'],
+                ],
+                [
+                    'name' => $role['name'],
+                    'scope' => $role['scope'],
+                    'is_external' => $role['is_external'],
+                    'description' => $role['description'],
+                ]
+            );
+        }
     }
 }

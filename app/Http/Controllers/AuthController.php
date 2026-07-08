@@ -14,11 +14,16 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
+use App\Services\ActivityLogger;
 use App\Services\MailService;
 use App\Models\UserAuthToken;
 
 class AuthController extends Controller
 {
+    public function __construct(private readonly ActivityLogger $activityLogger)
+    {
+    }
+
     /**
      * Cookie-based signup (session auth).
      * Requires valid XSRF token (419 if missing/invalid).
@@ -50,20 +55,141 @@ class AuthController extends Controller
 
             // Attach user to tenant
             $tenant->users()->attach($user->id, [
-                'created_by_user_id' => $user->id,
                 'status' => 'active',
-                'joined_at' => now(),
-                'invited_by_user_id' => 0,
+                'invited_by_user_id' => $user->id,
             ]);
 
             return $user;
         });
 
+        Auth::guard('web')->login($user);
+        $request->session()->regenerate();
+
         return response()->json([
             'ok'   => true,
-            'user' => UserResource::make($request->user()->load('tenants')),
+            'user' => UserResource::make($user->load('tenants')),
         ], 201);
     }
+
+    public function registerCustomer(Request $request)
+    {
+        $validated = $request->validate([
+            'first_name' => ['required', 'string', 'max:100'],
+            'last_name' => ['required', 'string', 'max:100'],
+            'name' => ['required', 'string', 'max:190'],
+            'email' => ['required', 'email', 'max:190', 'unique:users,email'],
+            'phone' => ['required', 'string', 'max:40'],
+            'password' => ['required', 'confirmed', Password::defaults()],
+            'role' => ['required', 'in:customer'],
+            'terms' => ['accepted'],
+        ]);
+
+        $user = User::create([
+            'name' => $validated['name'],
+            'email' => $validated['email'],
+            'password' => Hash::make($validated['password']),
+            'account_state' => 'account',
+        ]);
+
+        return response()->json([
+            'ok' => true,
+            'message' => 'Customer account created successfully. Redirecting to login...',
+            'user' => UserResource::make($user->load('tenants')),
+        ], 201);
+    }
+
+    public function registerAgency(Request $request)
+    {
+        $validated = $request->validate([
+            'agency_name' => ['required', 'string', 'max:190'],
+            'business_email' => ['required', 'email', 'max:190'],
+            'business_phone' => ['required', 'string', 'max:40'],
+            'country' => ['required', 'string', 'max:120'],
+            'city' => ['required', 'string', 'max:120'],
+            'address' => ['nullable', 'string', 'max:255'],
+            'description' => ['nullable', 'string', 'max:1000'],
+            'name' => ['required', 'string', 'max:190'],
+            'email' => ['required', 'email', 'max:190', 'unique:users,email'],
+            'phone' => ['required', 'string', 'max:40'],
+            'password' => ['required', 'confirmed', Password::defaults()],
+            'agency_logo' => ['nullable', 'image', 'max:4096'],
+            'services' => ['nullable', 'array'],
+            'services.*' => ['string', 'max:120'],
+        ]);
+
+        $logoPath = $request->file('agency_logo')?->store('agency-logos', 'public');
+
+        $result = DB::transaction(function () use ($validated, $logoPath) {
+            $user = User::create([
+                'name' => $validated['name'],
+                'email' => $validated['email'],
+                'password' => Hash::make($validated['password']),
+                'account_state' => 'account',
+            ]);
+
+            $tenant = Tenant::create([
+                'name' => $validated['agency_name'],
+                'status' => 'pending',
+                'created_by_user_id' => $user->id,
+                'meta' => [
+                    'business_email' => $validated['business_email'],
+                    'business_phone' => $validated['business_phone'],
+                    'country' => $validated['country'],
+                    'city' => $validated['city'],
+                    'address' => $validated['address'] ?? null,
+                    'description' => $validated['description'] ?? null,
+                    'contact_phone' => $validated['phone'],
+                    'services' => array_values($validated['services'] ?? []),
+                    'logo_path' => $logoPath,
+                ],
+            ]);
+
+            $tenantOwnerRoleId = Role::where('key', 'tenant_owner')->value('id');
+
+            TenantUser::create([
+                'tenant_id' => $tenant->id,
+                'user_id' => $user->id,
+                'role_id' => $tenantOwnerRoleId,
+                'invited_by_user_id' => $user->id,
+                'status' => 'active',
+            ]);
+
+            return [$user, $tenant];
+        });
+
+        [$user, $tenant] = $result;
+
+        $this->activityLogger->log(
+            action: 'tenant.registration_submitted',
+            request: $request,
+            tenant: $tenant,
+            actor: $user,
+            subject: $tenant,
+            title: 'Agency registration submitted',
+            description: "{$tenant->name} submitted an agency registration request.",
+            category: 'tenant',
+            properties: [
+                'tenant_key' => $tenant->key,
+                'status' => $tenant->status,
+                'business_email' => $tenant->meta['business_email'] ?? null,
+            ],
+        );
+
+        return response()->json([
+            'ok' => true,
+            'message' => 'Agency account created. Your workspace is pending approval before dashboard access is enabled.',
+            'user' => UserResource::make($user->load('tenants')),
+            'tenant' => [
+                'id' => $tenant->id,
+                'key' => $tenant->key,
+                'name' => $tenant->name,
+                'role' => 'Tenant Owner',
+                'role_key' => 'tenant_owner',
+                'status' => $tenant->status,
+            ],
+        ], 201);
+    }
+
 
     /**
      * Cookie-based signup (session auth).
@@ -119,6 +245,7 @@ class AuthController extends Controller
                 'tenant_id' => $tenant->id,
                 'user_id' => $user->id,
                 'role_id' => $role_id,
+                'status' => 'active',
             ]);
 
             return $user;

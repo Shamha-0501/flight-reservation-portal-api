@@ -7,6 +7,7 @@ use App\Models\OrderAddon;
 use App\Models\Passenger;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\ActivityLogger;
 use App\Services\CurrencyConverter;
 use Illuminate\Http\Request;
 use App\Services\Duffel\DuffelService;
@@ -21,11 +22,17 @@ class FlightController extends Controller
 
     protected DuffelService $duffel;
     protected CurrencyConverter $currencyConverter;
+    protected ActivityLogger $activityLogger;
 
-    public function __construct(DuffelService $duffel, CurrencyConverter $currencyConverter)
+    public function __construct(
+        DuffelService $duffel,
+        CurrencyConverter $currencyConverter,
+        ActivityLogger $activityLogger
+    )
     {
         $this->duffel = $duffel;
         $this->currencyConverter = $currencyConverter;
+        $this->activityLogger = $activityLogger;
     }
 
     public function searchPlaces(Request $request)
@@ -348,7 +355,7 @@ class FlightController extends Controller
                 $orderUser = User::where('email', $orderEmail)->first();
             }
 
-            return DB::transaction(function () use ($validated, $orderUser) {
+            return DB::transaction(function () use ($validated, $orderUser, $authUser, $request) {
                 $offerResponse = $this->duffel->getOffer($validated['offer_id']);
                 $offer = $offerResponse['data'] ?? null;
 
@@ -443,6 +450,25 @@ class FlightController extends Controller
                         ],
                     ]);
                 }
+
+                $this->activityLogger->log(
+                    action: 'order.created',
+                    request: $request,
+                    tenant: $tenant,
+                    actor: $authUser ?? $orderUser,
+                    subject: $order,
+                    title: 'Booking created',
+                    description: "Booking {$order->booking_reference} was created.",
+                    category: 'order',
+                    properties: [
+                        'order_id' => $order->id,
+                        'duffel_order_id' => $order->duffel_order_id,
+                        'booking_reference' => $order->booking_reference,
+                        'status' => $order->status,
+                        'total_amount' => $order->total_amount,
+                        'currency' => $order->total_currency,
+                    ],
+                );
 
                 if (!empty($validated['addons'])) {
                     $addons = $this->currencyConverter->convertPayload($validated['addons']);
@@ -574,9 +600,12 @@ class FlightController extends Controller
         try {
             $validated = $request->validate([
                 'order_id' => 'required',
+                'tenantKey' => 'nullable|string|exists:tenants,key',
             ]);
 
             $order = $this->resolveOrderForCancellation($validated['order_id']);
+            $tenant = $this->resolveTenantFromKey($validated['tenantKey'] ?? null);
+            $this->assertOrderBelongsToTenant($order, $tenant);
             $validationError = $this->validateOrderCanBeCancelled($order);
 
             if ($validationError) {
@@ -606,6 +635,23 @@ class FlightController extends Controller
                     ], fn($value) => $value !== null),
                 ]),
             ]);
+
+            $this->activityLogger->log(
+                action: 'order.cancellation_requested',
+                request: $request,
+                tenant: $order->tenant,
+                actor: $request->user(),
+                subject: $order,
+                title: 'Cancellation requested',
+                description: "Cancellation was requested for booking {$order->booking_reference}.",
+                category: 'order',
+                properties: [
+                    'order_id' => $order->id,
+                    'booking_reference' => $order->booking_reference,
+                    'refund_amount' => $quoteSummary['refund_amount'],
+                    'refund_currency' => $quoteSummary['refund_currency'],
+                ],
+            );
 
             return response()->json([
                 'message' => 'Cancellation quote created successfully',
@@ -644,7 +690,13 @@ class FlightController extends Controller
     public function confirmOrderCancellation(string $cancellationId, int $orderId)
     {
         try {
+            $validated = request()->validate([
+                'tenantKey' => 'nullable|string|exists:tenants,key',
+            ]);
+
             $order = Order::findOrFail($orderId);
+            $tenant = $this->resolveTenantFromKey($validated['tenantKey'] ?? null);
+            $this->assertOrderBelongsToTenant($order, $tenant);
             $validationError = $this->validateOrderCanBeCancelled($order);
 
             if ($validationError) {
@@ -700,6 +752,24 @@ class FlightController extends Controller
                 ]),
             ]);
 
+            $this->activityLogger->log(
+                action: 'order.cancellation_confirmed',
+                request: $request,
+                tenant: $order->tenant,
+                actor: $request->user(),
+                subject: $order,
+                title: 'Cancellation confirmed',
+                description: "Cancellation was confirmed for booking {$order->booking_reference}.",
+                category: 'order',
+                properties: [
+                    'order_id' => $order->id,
+                    'booking_reference' => $order->booking_reference,
+                    'refund_amount' => $confirmedSummary['refund_amount'],
+                    'refund_currency' => $confirmedSummary['refund_currency'],
+                    'refund_status' => $refundStatus,
+                ],
+            );
+
             return response()->json([
                 'message' => 'Order cancellation confirmed successfully',
                 'order_id' => $order->id,
@@ -723,11 +793,14 @@ class FlightController extends Controller
     {
         try {
             $validated = $request->validate([
+                'tenantKey' => 'nullable|string|exists:tenants,key',
                 'reference' => 'nullable|string|max:255',
                 'notes' => 'nullable|string',
             ]);
 
             $order = Order::findOrFail($orderId);
+            $tenant = $this->resolveTenantFromKey($validated['tenantKey'] ?? null);
+            $this->assertOrderBelongsToTenant($order, $tenant);
             $cancellation = data_get($order->meta, 'cancellation', []);
             $refundAmount = $this->normalizeDecimal($cancellation['refund_amount'] ?? null);
 
@@ -761,6 +834,23 @@ class FlightController extends Controller
                 ]),
             ]);
 
+            $this->activityLogger->log(
+                action: 'order.refund_confirmed',
+                request: $request,
+                tenant: $order->tenant,
+                actor: $request->user(),
+                subject: $order,
+                title: 'Refund confirmed',
+                description: "Refund was confirmed for booking {$order->booking_reference}.",
+                category: 'order',
+                properties: [
+                    'order_id' => $order->id,
+                    'booking_reference' => $order->booking_reference,
+                    'reference' => $validated['reference'] ?? null,
+                    'refund_status' => Order::REFUND_STATUS_REFUNDED,
+                ],
+            );
+
             return response()->json([
                 'message' => 'Refund confirmed successfully',
                 'order_id' => $order->id,
@@ -789,6 +879,22 @@ class FlightController extends Controller
         return $query
             ->orWhere('duffel_order_id', $orderReference)
             ->firstOrFail();
+    }
+
+    private function resolveTenantFromKey(?string $tenantKey): ?Tenant
+    {
+        if (! is_string($tenantKey) || trim($tenantKey) === '') {
+            return null;
+        }
+
+        return Tenant::where('key', $tenantKey)->first();
+    }
+
+    private function assertOrderBelongsToTenant(Order $order, ?Tenant $tenant): void
+    {
+        if ($tenant && $order->tenant_id !== $tenant->id) {
+            abort(404, 'Booking does not belong to the given tenant.');
+        }
     }
 
     private function validateOrderCanBeCancelled(Order $order): ?\Illuminate\Http\JsonResponse
@@ -900,6 +1006,35 @@ class FlightController extends Controller
         return number_format((float) $value, 2, '.', '');
     }
 
+    private function resolveLocalOrder(?string $orderReference): ?Order
+    {
+        if (! is_string($orderReference) || trim($orderReference) === '') {
+            return null;
+        }
+
+        $query = Order::query();
+
+        if (ctype_digit($orderReference)) {
+            $query->where('id', (int) $orderReference);
+        }
+
+        return $query
+            ->orWhere('duffel_order_id', $orderReference)
+            ->first();
+    }
+
+    private function updateOrderChangeMeta(Order $order, array $attributes): void
+    {
+        $order->forceFill([
+            'meta' => $this->mergeOrderMeta($order, [
+                'change' => array_filter(
+                    $attributes,
+                    fn ($value) => $value !== null && $value !== []
+                ),
+            ]),
+        ])->save();
+    }
+
     public function createOrderChangeRequest(Request $request)
     {
         try {
@@ -914,8 +1049,43 @@ class FlightController extends Controller
                 'slices.add.*.departure_date' => 'required_with:slices.add|date_format:Y-m-d',
                 'slices.add.*.cabin_class' => 'nullable|string',
             ]);
+            $order = $this->resolveLocalOrder($validated['order_id']);
+            $payload = $validated;
 
-            return response()->json($this->imposeDefaultCurrency($this->duffel->createOrderChangeRequest($validated)));
+            if ($order) {
+                $payload['order_id'] = $order->duffel_order_id;
+            }
+
+            $response = $this->duffel->createOrderChangeRequest($payload);
+            $data = $response['data'] ?? $response;
+
+            if ($order) {
+                $this->updateOrderChangeMeta($order, [
+                    'request_id' => data_get($data, 'id'),
+                    'status' => 'requested',
+                    'requested_at' => now()->toISOString(),
+                    'request_payload' => $payload,
+                    'request_response' => $response,
+                ]);
+
+                $this->activityLogger->log(
+                    action: 'order.change_requested',
+                    request: $request,
+                    tenant: $order->tenant,
+                    actor: $request->user(),
+                    subject: $order,
+                    title: 'Reschedule requested',
+                    description: "A reschedule request was created for booking {$order->booking_reference}.",
+                    category: 'order',
+                    properties: [
+                        'order_id' => $order->id,
+                        'booking_reference' => $order->booking_reference,
+                        'request_id' => data_get($data, 'id'),
+                    ],
+                );
+            }
+
+            return response()->json($this->imposeDefaultCurrency($response));
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Order change request failed',
@@ -958,8 +1128,41 @@ class FlightController extends Controller
             $validated = $request->validate([
                 'selected_order_change_offer' => 'required|string',
             ]);
+            $response = $this->duffel->createOrderChange($validated);
+            $data = $response['data'] ?? $response;
+            $order = $this->resolveLocalOrder((string) (
+                data_get($data, 'order_id')
+                ?? data_get($data, 'order.id')
+                ?? data_get($data, 'order.data.id')
+            ));
 
-            return response()->json($this->imposeDefaultCurrency($this->duffel->createOrderChange($validated)));
+            if ($order) {
+                $this->updateOrderChangeMeta($order, [
+                    'order_change_id' => data_get($data, 'id'),
+                    'selected_order_change_offer' => $validated['selected_order_change_offer'],
+                    'status' => 'pending_confirmation',
+                    'change_created_at' => now()->toISOString(),
+                    'change_response' => $response,
+                ]);
+
+                $this->activityLogger->log(
+                    action: 'order.change_created',
+                    request: $request,
+                    tenant: $order->tenant,
+                    actor: $request->user(),
+                    subject: $order,
+                    title: 'Reschedule prepared',
+                    description: "A reschedule change was prepared for booking {$order->booking_reference}.",
+                    category: 'order',
+                    properties: [
+                        'order_id' => $order->id,
+                        'booking_reference' => $order->booking_reference,
+                        'order_change_id' => data_get($data, 'id'),
+                    ],
+                );
+            }
+
+            return response()->json($this->imposeDefaultCurrency($response));
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Order change creation failed',
@@ -986,10 +1189,45 @@ class FlightController extends Controller
             $validated = $request->validate([
                 'payment' => 'nullable|array',
             ]);
+            $response = $this->duffel->confirmOrderChange($orderChangeId, $validated);
+            $data = $response['data'] ?? $response;
+            $order = $this->resolveLocalOrder((string) (
+                data_get($data, 'order_id')
+                ?? data_get($data, 'order.id')
+                ?? data_get($data, 'updated_order.id')
+                ?? data_get($data, 'order.data.id')
+            ));
 
-            return response()->json(
-                $this->imposeDefaultCurrency($this->duffel->confirmOrderChange($orderChangeId, $validated))
-            );
+            if ($order) {
+                $order->forceFill([
+                    'status' => Order::STATUS_BOOKED,
+                ])->save();
+
+                $this->updateOrderChangeMeta($order, [
+                    'order_change_id' => $orderChangeId,
+                    'status' => 'confirmed',
+                    'confirmed_at' => now()->toISOString(),
+                    'confirmation_response' => $response,
+                ]);
+
+                $this->activityLogger->log(
+                    action: 'order.change_confirmed',
+                    request: $request,
+                    tenant: $order->tenant,
+                    actor: $request->user(),
+                    subject: $order,
+                    title: 'Reschedule confirmed',
+                    description: "A reschedule change was confirmed for booking {$order->booking_reference}.",
+                    category: 'order',
+                    properties: [
+                        'order_id' => $order->id,
+                        'booking_reference' => $order->booking_reference,
+                        'order_change_id' => $orderChangeId,
+                    ],
+                );
+            }
+
+            return response()->json($this->imposeDefaultCurrency($response));
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Order change confirmation failed',

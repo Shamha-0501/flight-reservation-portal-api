@@ -14,9 +14,12 @@ class OrderController extends Controller
         $validated = $request->validate([
             'tenantKey' => ['required', 'string', 'exists:tenants,key'],
             'email' => ['nullable', 'email'],
+            'search' => ['nullable', 'string', 'max:190'],
             'status' => ['nullable', 'string'],
             'cancellation_status' => ['nullable', 'string'],
             'refund_status' => ['nullable', 'string'],
+            'cancellation_scope' => ['nullable', 'in:all'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
         $tenant = Tenant::where('key', $validated['tenantKey'])->firstOrFail();
@@ -36,6 +39,26 @@ class OrderController extends Controller
             });
         }
 
+        if (! empty($validated['search'])) {
+            $search = $validated['search'];
+
+            $query->where(function ($q) use ($search) {
+                $q->where('booking_reference', 'like', "%{$search}%")
+                    ->orWhere('duffel_order_id', 'like', "%{$search}%")
+                    ->orWhereHas('user', function ($userQuery) use ($search) {
+                        $userQuery
+                            ->where('name', 'like', "%{$search}%")
+                            ->orWhere('email', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('passengers', function ($passengerQuery) use ($search) {
+                        $passengerQuery
+                            ->where('given_name', 'like', "%{$search}%")
+                            ->orWhere('family_name', 'like', "%{$search}%")
+                            ->orWhere('phone_number', 'like', "%{$search}%");
+                    });
+            });
+        }
+
         if (! empty($validated['status'])) {
             $query->where('status', $validated['status']);
         }
@@ -48,8 +71,15 @@ class OrderController extends Controller
             $query->where('refund_status', $validated['refund_status']);
         }
 
+        if (($validated['cancellation_scope'] ?? null) === 'all') {
+            $query->where(function ($q) {
+                $q->where('cancellation_status', '!=', Order::CANCELLATION_STATUS_NONE)
+                    ->orWhereNotNull('refund_status');
+            });
+        }
+
         return OrderResource::collection(
-            $query->paginate(20)
+            $query->paginate((int) ($validated['per_page'] ?? 20))
         );
     }
 
