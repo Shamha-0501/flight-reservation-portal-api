@@ -738,8 +738,10 @@ class FlightController extends Controller
                 ], 422);
             }
 
-            if ($order->cancellation_status !== Order::CANCELLATION_STATUS_CANCELLED
-                || $order->refund_status !== Order::REFUND_STATUS_PENDING) {
+            if (
+                $order->cancellation_status !== Order::CANCELLATION_STATUS_CANCELLED
+                || $order->refund_status !== Order::REFUND_STATUS_PENDING
+            ) {
                 return response()->json([
                     'error' => 'Invalid refund state',
                     'message' => 'Only cancelled bookings with pending refunds can be marked as refunded.',
@@ -826,8 +828,8 @@ class FlightController extends Controller
                 ?? data_get($data, 'currency'),
             'cancellation_fee' => $this->normalizeDecimal(
                 data_get($data, 'cancellation_fee')
-                ?? data_get($data, 'fee_amount')
-                ?? data_get($data, 'fee.amount')
+                    ?? data_get($data, 'fee_amount')
+                    ?? data_get($data, 'fee.amount')
             ),
             'cancellation_fee_currency' => data_get($data, 'cancellation_fee_currency')
                 ?? data_get($data, 'fee_currency')
@@ -985,10 +987,21 @@ class FlightController extends Controller
         try {
             $validated = $request->validate([
                 'payment' => 'nullable|array',
+                'payment.type' => 'required_with:payment|string',
+                'payment.amount' => 'required_with:payment|string',
+                'payment.currency' => 'required_with:payment|string|size:3',
             ]);
 
+            $payload = [];
+
+            if (!empty($validated['payment'])) {
+                $payload['payment'] = $validated['payment'];
+            }
+
             return response()->json(
-                $this->imposeDefaultCurrency($this->duffel->confirmOrderChange($orderChangeId, $validated))
+                $this->imposeDefaultCurrency(
+                    $this->duffel->confirmOrderChange($orderChangeId, $payload)
+                )
             );
         } catch (\Throwable $e) {
             return response()->json([
