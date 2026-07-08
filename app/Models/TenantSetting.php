@@ -11,8 +11,12 @@ class TenantSetting extends Model
 
     protected $table = 'tenant_settings';
     protected $fillable = [
-        'tenat_id',
+        'tenant_id',
         'settings'
+    ];
+
+    protected $casts = [
+        'settings' => 'array',
     ];
 
     public function tenant()

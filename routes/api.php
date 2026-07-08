@@ -1,13 +1,20 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\ActivityLogController;
+use App\Http\Controllers\CompanyController;
+use App\Http\Controllers\Admin\TenantApprovalController;
 use App\Http\Controllers\FlightController;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\TenantDashboardController;
+use App\Http\Controllers\TenantCustomerController;
+use App\Http\Controllers\TenantMemberController;
 use App\Http\Controllers\TenantAddonSettingController;
 use App\Http\Controllers\TenantController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('auth:sanctum')->get('/me', [AuthController::class, 'me']);
+Route::get('/company/bootstrap', [CompanyController::class, 'bootstrap']);
 
 /*
 |--------------------------------------------------------------------------
@@ -48,7 +55,37 @@ Route::get('/order-changes/{orderChangeId}', [FlightController::class, 'getOrder
 Route::post('/order-changes/{orderChangeId}/confirm', [FlightController::class, 'confirmOrderChange']);
 
 Route::get('/tenants/active', [TenantController::class, 'getActiveTenants']);
-Route::get('/extras', [TenantAddonSettingController::class, 'getTenantAddonSettings']);
+Route::post('/tenant-invitations/accept', [TenantMemberController::class, 'acceptInvitation']);
+
+Route::middleware(['auth:sanctum'])->group(function () {
+    Route::get('/extras', [TenantAddonSettingController::class, 'getTenantAddonSettings'])
+        ->middleware('workspace.access');
+
+    Route::prefix('admin')->middleware('role:system_developer,super_admin')->group(function () {
+        Route::get('/tenants/pending', [TenantApprovalController::class, 'pending']);
+        Route::post('/tenants/{tenant}/approve', [TenantApprovalController::class, 'approve']);
+        Route::post('/tenants/{tenant}/reject', [TenantApprovalController::class, 'reject']);
+        Route::post('/tenants/{tenant}/suspend', [TenantApprovalController::class, 'suspend']);
+        Route::post('/tenants/{tenant}/reactivate', [TenantApprovalController::class, 'reactivate']);
+        Route::get('/activities', [ActivityLogController::class, 'adminIndex']);
+    });
+
+    Route::prefix('tenants')->middleware('workspace.access')->group(function () {
+        Route::get('/dashboard', [TenantDashboardController::class, 'index']);
+        Route::get('/activities', [ActivityLogController::class, 'tenantIndex']);
+        Route::get('/customers', [TenantCustomerController::class, 'index']);
+        Route::get('/members', [TenantMemberController::class, 'index'])
+            ->middleware('role:tenant_owner,tenant_admin');
+        Route::post('/members/invite', [TenantMemberController::class, 'invite'])
+            ->middleware('role:tenant_owner,tenant_admin');
+        Route::patch('/members/{member}/role', [TenantMemberController::class, 'changeRole'])
+            ->middleware('role:tenant_owner,tenant_admin');
+        Route::delete('/members/{member}', [TenantMemberController::class, 'remove'])
+            ->middleware('role:tenant_owner,tenant_admin');
+        Route::post('/invitations/{invitation}/resend', [TenantMemberController::class, 'resendInvite'])
+            ->middleware('role:tenant_owner,tenant_admin');
+    });
+});
 
 Route::prefix('bookings')->group(function () {
     Route::get('/', [OrderController::class, 'index']);

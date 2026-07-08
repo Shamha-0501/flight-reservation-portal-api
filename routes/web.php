@@ -5,6 +5,10 @@ use App\Http\Controllers\AuthController;
 
 Route::middleware(['web'])->prefix('auth')->group(function () {
 
+    Route::post('/register/customer', [AuthController::class, 'registerCustomer']);
+
+    Route::post('/register/agency', [AuthController::class, 'registerAgency']);
+
     Route::post('/register', [AuthController::class, 'register']);
 
     Route::post('/login', [AuthController::class, 'login']);

@@ -17,6 +17,7 @@ class TenantAddonSettingController extends Controller
 
         $tenantKey = $validated['tenantKey'];
         $tenant = Tenant::where('key', $tenantKey)->first();
+        abort_if(! $tenant, 404, 'Tenant not found.');
         $settings = TenantAddonSetting::where('tenant_id', $tenant->id)->first();
 
         if (!$settings) {
