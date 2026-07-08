@@ -1087,7 +1087,7 @@ class FlightController extends Controller
                 );
             }
 
-            return response()->json($this->imposeDefaultCurrency($response));
+            return response()->json($response);
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Order change request failed',
