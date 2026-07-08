@@ -379,7 +379,7 @@ class FlightController extends Controller
 
                 $duffelOrderResponse = $this->duffel->createOrder($payload);
                 $duffelOrder = $duffelOrderResponse['data'] ?? $duffelOrderResponse;
-
+                logger()->info("stage-1");
                 if (!is_array($duffelOrder) || empty($duffelOrder['id'])) {
                     throw new \Exception('Invalid Duffel order response');
                 }
@@ -427,6 +427,7 @@ class FlightController extends Controller
                         'duffel_order' => $duffelOrder,
                     ],
                 ]);
+                logger()->info("stage-2");
 
                 foreach ($validated['passengers'] as $passengerData) {
                     Passenger::create([
@@ -450,6 +451,7 @@ class FlightController extends Controller
                         ],
                     ]);
                 }
+                logger()->info("stage-3");
 
                 $this->activityLogger->log(
                     action: 'order.created',
@@ -469,6 +471,7 @@ class FlightController extends Controller
                         'currency' => $order->total_currency,
                     ],
                 );
+                logger()->info("stage-4");
 
                 if (!empty($validated['addons'])) {
                     $addons = $this->currencyConverter->convertPayload($validated['addons']);
@@ -687,7 +690,7 @@ class FlightController extends Controller
         }
     }
 
-    public function confirmOrderCancellation(string $cancellationId, int $orderId)
+    public function confirmOrderCancellation( Request $request,string $cancellationId, int $orderId)
     {
         try {
             $validated = request()->validate([
