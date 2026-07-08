@@ -687,7 +687,7 @@ class FlightController extends Controller
         }
     }
 
-    public function confirmOrderCancellation(string $cancellationId, int $orderId)
+    public function confirmOrderCancellation( Request $request,string $cancellationId, int $orderId)
     {
         try {
             $validated = request()->validate([
