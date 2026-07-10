@@ -20,6 +20,8 @@ class DatabaseSeeder extends Seeder
             UserSeeder::class,
             TenantUserSeeder::class,
             TenantAddonSeeder::class,
+            PlatformAddonSeeder::class,
+            TenantAddonCatalogSeeder::class,
         ]);
     }
 }

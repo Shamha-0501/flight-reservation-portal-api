@@ -12,7 +12,7 @@ class OrderController extends Controller
     public function index(Request $request)
     {
         $validated = $request->validate([
-            'tenantKey' => ['required', 'string', 'exists:tenants,key'],
+            'tenantKey' => ['nullable', 'string', 'exists:tenants,key'],
             'email' => ['nullable', 'email'],
             'search' => ['nullable', 'string', 'max:190'],
             'status' => ['nullable', 'string'],
@@ -22,21 +22,31 @@ class OrderController extends Controller
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
-        $tenant = Tenant::where('key', $validated['tenantKey'])->firstOrFail();
-
         $query = Order::query()
-            ->where('tenant_id', $tenant->id)
             ->with([
                 'user',
                 'passengers',
-                // 'addons',
+                'addons',
+                'tenant',
             ])
             ->latest();
 
-        if (! empty($validated['email'])) {
+        if (! empty($validated['tenantKey'])) {
+            $tenant = Tenant::where('key', $validated['tenantKey'])->firstOrFail();
+            $query->where('tenant_id', $tenant->id);
+        } elseif ($request->user()) {
+            $query->where('user_id', $request->user()->id);
+        } elseif (! empty($validated['email'])) {
             $query->whereHas('user', function ($q) use ($validated) {
                 $q->where('email', $validated['email']);
             });
+        } else {
+            return response()->json([
+                'message' => 'An authenticated customer account or tenant key is required.',
+                'errors' => [
+                    'tenantKey' => ['An authenticated customer account or tenant key is required.'],
+                ],
+            ], 422);
         }
 
         if (! empty($validated['search'])) {
@@ -86,17 +96,27 @@ class OrderController extends Controller
     public function show(Request $request, Order $order)
     {
         $validated = $request->validate([
-            'tenantKey' => ['required', 'string', 'exists:tenants,key'],
+            'tenantKey' => ['nullable', 'string', 'exists:tenants,key'],
         ]);
 
-        $tenant = Tenant::where('key', $validated['tenantKey'])->firstOrFail();
-
-        abort_if($order->tenant_id !== $tenant->id, 404);
+        if (! empty($validated['tenantKey'])) {
+            $tenant = Tenant::where('key', $validated['tenantKey'])->firstOrFail();
+            abort_if($order->tenant_id !== $tenant->id, 404);
+        } elseif ($request->user()) {
+            abort_if($order->user_id !== $request->user()->id, 404);
+        } else {
+            abort_if(
+                ! empty($request->query('email')) &&
+                optional($order->user)->email !== $request->query('email'),
+                404
+            );
+        }
 
         $order->load([
             'user',
             'passengers',
-            // 'addons',
+            'addons',
+            'tenant',
         ]);
 
         return response()->json([

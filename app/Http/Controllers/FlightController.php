@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Order;
 use App\Models\OrderAddon;
+use App\Models\BookingAddon;
 use App\Models\Passenger;
 use App\Models\Tenant;
 use App\Models\User;
@@ -339,6 +340,20 @@ class FlightController extends Controller
 
                 // Optional addons
                 'addons' => 'nullable|array',
+                'booking_addons' => 'nullable|array',
+                'booking_addons.*.addon_id' => 'required_with:booking_addons|integer|exists:addons,id',
+                'booking_addons.*.addon_code' => 'required_with:booking_addons|string|max:255',
+                'booking_addons.*.addon_name' => 'required_with:booking_addons|string|max:255',
+                'booking_addons.*.price' => 'required_with:booking_addons|numeric|min:0',
+                'booking_addons.*.currency' => 'required_with:booking_addons|string|size:3',
+                'booking_addons.*.meta' => 'nullable|array',
+                'agency_markup' => 'nullable|array',
+                'agency_markup.enabled' => 'required_with:agency_markup|boolean',
+                'agency_markup.mode' => 'required_with:agency_markup|in:percentage,fixed',
+                'agency_markup.value' => 'required_with:agency_markup|numeric|min:0',
+                'agency_markup.amount' => 'nullable|numeric|min:0',
+                'agency_markup.currency' => 'required_with:agency_markup|string|size:3',
+                'agency_markup.label' => 'nullable|string|max:255',
                 'contact_email' => 'nullable|email',
             ]);
 
@@ -425,6 +440,7 @@ class FlightController extends Controller
                     'meta' => [
                         'offer' => $offer,
                         'duffel_order' => $duffelOrder,
+                        'agency_markup' => $validated['agency_markup'] ?? null,
                     ],
                 ]);
                 logger()->info("stage-2");
@@ -452,6 +468,21 @@ class FlightController extends Controller
                     ]);
                 }
                 logger()->info("stage-3");
+
+                if (!empty($validated['booking_addons'])) {
+                    foreach ($validated['booking_addons'] as $bookingAddon) {
+                        BookingAddon::create([
+                            'tenant_id' => $order->tenant_id,
+                            'order_id' => $order->id,
+                            'addon_id' => $bookingAddon['addon_id'],
+                            'addon_code' => $bookingAddon['addon_code'],
+                            'addon_name' => $bookingAddon['addon_name'],
+                            'price' => $this->normalizeDecimal($bookingAddon['price'] ?? null),
+                            'currency' => strtoupper($bookingAddon['currency'] ?? $this->defaultCurrency()),
+                            'meta' => $bookingAddon['meta'] ?? null,
+                        ]);
+                    }
+                }
 
                 $this->activityLogger->log(
                     action: 'order.created',
@@ -615,9 +646,34 @@ class FlightController extends Controller
                 return $validationError;
             }
 
+            $refundBeforeDeparture = data_get($order->meta, 'duffel_order.conditions.refund_before_departure');
+            $isRefundable = null;
+
+            if (is_bool($refundBeforeDeparture)) {
+                $isRefundable = $refundBeforeDeparture;
+            } elseif (is_array($refundBeforeDeparture) && array_key_exists('allowed', $refundBeforeDeparture)) {
+                $isRefundable = (bool) data_get($refundBeforeDeparture, 'allowed');
+            }
+
             $quoteResponse = $this->duffel->createOrderCancellation($order->duffel_order_id);
             $quote = $quoteResponse['data'] ?? [];
             $quoteSummary = $this->extractCancellationQuoteSummary($quoteResponse);
+            $warnings = $quoteSummary['warnings'] ?? [];
+
+            if (! is_array($warnings)) {
+                $warnings = [$warnings];
+            }
+
+            if ($isRefundable === false) {
+                $warnings[] = 'This booking is marked as non-refundable, but cancellation can still be requested.';
+            }
+
+            $warnings = array_values(array_filter($warnings, fn ($warning) => $warning !== null && $warning !== ''));
+            $quoteSummary['warnings'] = $warnings;
+            $quoteSummary['refundability'] = [
+                'is_refundable' => $isRefundable,
+                'refund_before_departure' => $refundBeforeDeparture,
+            ];
 
             $order->update([
                 'status' => Order::STATUS_CANCELLATION_REQUESTED,
@@ -631,7 +687,8 @@ class FlightController extends Controller
                         'cancellation_fee' => $quoteSummary['cancellation_fee'],
                         'cancellation_fee_currency' => $quoteSummary['cancellation_fee_currency'],
                         'expires_at' => $quoteSummary['expires_at'],
-                        'warnings' => $quoteSummary['warnings'],
+                        'warnings' => $warnings,
+                        'refundability' => $quoteSummary['refundability'],
                         'confirmed_at' => null,
                         'quote_created_at' => now()->toISOString(),
                         'cancellation_response' => $quoteResponse,
@@ -911,15 +968,6 @@ class FlightController extends Controller
             ], 422);
         }
 
-        $refundBeforeDeparture = data_get($order->meta, 'duffel_order.conditions.refund_before_departure');
-
-        if ($refundBeforeDeparture === false || data_get($refundBeforeDeparture, 'allowed') === false) {
-            return response()->json([
-                'error' => 'Order is not cancellable',
-                'message' => 'This booking cannot be cancelled based on the stored Duffel conditions.',
-            ], 422);
-        }
-
         return null;
     }
 
@@ -1038,6 +1086,25 @@ class FlightController extends Controller
                 ),
             ]),
         ])->save();
+    }
+
+    private function updateOrderCancellationMeta(Order $order, array $attributes): void
+    {
+        $order->forceFill([
+            'meta' => $this->mergeOrderMeta($order, [
+                'cancellation' => array_filter(
+                    $attributes,
+                    fn ($value) => $value !== null && $value !== []
+                ),
+            ]),
+        ])->save();
+    }
+
+    private function normalizeWorkflowStatus(?string $status): string
+    {
+        $normalized = strtolower(trim($status ?? ''));
+
+        return $normalized === 'pending_confirmation' ? 'approved' : $normalized;
     }
 
     public function createOrderChangeRequest(Request $request)
@@ -1176,6 +1243,250 @@ class FlightController extends Controller
         }
     }
 
+    public function approveOrderChange(Request $request, string $orderId)
+    {
+        try {
+            $validated = $request->validate([
+                'tenantKey' => 'nullable|string|exists:tenants,key',
+                'note' => 'nullable|string|max:1000',
+            ]);
+
+            $order = Order::findOrFail($orderId);
+            $tenant = $this->resolveTenantFromKey($validated['tenantKey'] ?? null);
+            $this->assertOrderBelongsToTenant($order, $tenant);
+
+            $change = data_get($order->meta, 'change', []);
+            $currentStatus = $this->normalizeWorkflowStatus((string) data_get($change, 'status'));
+
+            if (in_array($currentStatus, ['rejected', 'confirmed'], true)) {
+                return response()->json([
+                    'error' => 'Change workflow is already finalized',
+                    'message' => 'This reschedule has already been rejected or confirmed.',
+                ], 422);
+            }
+
+            $this->updateOrderChangeMeta($order, [
+                ...$change,
+                'status' => 'approved',
+                'approved_at' => now()->toISOString(),
+                'approved_by' => $request->user()?->id,
+                'approval_note' => $validated['note'] ?? null,
+            ]);
+
+            $this->activityLogger->log(
+                action: 'order.change_approved',
+                request: $request,
+                tenant: $order->tenant,
+                actor: $request->user(),
+                subject: $order,
+                title: 'Reschedule approved',
+                description: "A reschedule was approved for booking {$order->booking_reference}.",
+                category: 'order',
+                properties: [
+                    'order_id' => $order->id,
+                    'booking_reference' => $order->booking_reference,
+                    'status' => 'approved',
+                ],
+            );
+
+            return response()->json([
+                'message' => 'Reschedule approved successfully',
+                'order_id' => $order->id,
+                'status' => $order->status,
+                'change_status' => 'approved',
+                'order' => \App\Http\Resources\OrderResource::make($order->fresh()->load(['tenant', 'user', 'passengers']))->resolve(),
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Failed to approve reschedule',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function rejectOrderChange(Request $request, string $orderId)
+    {
+        try {
+            $validated = $request->validate([
+                'tenantKey' => 'nullable|string|exists:tenants,key',
+                'reason' => 'nullable|string|max:1000',
+            ]);
+
+            $order = Order::findOrFail($orderId);
+            $tenant = $this->resolveTenantFromKey($validated['tenantKey'] ?? null);
+            $this->assertOrderBelongsToTenant($order, $tenant);
+
+            $change = data_get($order->meta, 'change', []);
+            $currentStatus = $this->normalizeWorkflowStatus((string) data_get($change, 'status'));
+
+            if ($currentStatus === 'confirmed') {
+                return response()->json([
+                    'error' => 'Change workflow is already finalized',
+                    'message' => 'This reschedule has already been confirmed.',
+                ], 422);
+            }
+
+            $this->updateOrderChangeMeta($order, [
+                ...$change,
+                'status' => 'rejected',
+                'rejected_at' => now()->toISOString(),
+                'rejected_by' => $request->user()?->id,
+                'rejection_reason' => $validated['reason'] ?? null,
+            ]);
+
+            $this->activityLogger->log(
+                action: 'order.change_rejected',
+                request: $request,
+                tenant: $order->tenant,
+                actor: $request->user(),
+                subject: $order,
+                title: 'Reschedule rejected',
+                description: "A reschedule was rejected for booking {$order->booking_reference}.",
+                category: 'order',
+                properties: [
+                    'order_id' => $order->id,
+                    'booking_reference' => $order->booking_reference,
+                    'status' => 'rejected',
+                ],
+            );
+
+            return response()->json([
+                'message' => 'Reschedule rejected successfully',
+                'order_id' => $order->id,
+                'status' => $order->status,
+                'change_status' => 'rejected',
+                'order' => \App\Http\Resources\OrderResource::make($order->fresh()->load(['tenant', 'user', 'passengers']))->resolve(),
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Failed to reject reschedule',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function approveOrderCancellation(Request $request, string $orderId)
+    {
+        try {
+            $validated = $request->validate([
+                'tenantKey' => 'nullable|string|exists:tenants,key',
+                'note' => 'nullable|string|max:1000',
+            ]);
+
+            $order = Order::findOrFail($orderId);
+            $tenant = $this->resolveTenantFromKey($validated['tenantKey'] ?? null);
+            $this->assertOrderBelongsToTenant($order, $tenant);
+
+            $cancellation = data_get($order->meta, 'cancellation', []);
+            $currentStatus = $this->normalizeWorkflowStatus((string) data_get($cancellation, 'status'));
+
+            if (in_array($currentStatus, ['rejected', 'confirmed'], true)) {
+                return response()->json([
+                    'error' => 'Cancellation workflow is already finalized',
+                    'message' => 'This cancellation has already been rejected or confirmed.',
+                ], 422);
+            }
+
+            $this->updateOrderCancellationMeta($order, [
+                ...$cancellation,
+                'status' => 'approved',
+                'approved_at' => now()->toISOString(),
+                'approved_by' => $request->user()?->id,
+                'approval_note' => $validated['note'] ?? null,
+            ]);
+
+            $this->activityLogger->log(
+                action: 'order.cancellation_approved',
+                request: $request,
+                tenant: $order->tenant,
+                actor: $request->user(),
+                subject: $order,
+                title: 'Cancellation approved',
+                description: "A cancellation was approved for booking {$order->booking_reference}.",
+                category: 'order',
+                properties: [
+                    'order_id' => $order->id,
+                    'booking_reference' => $order->booking_reference,
+                    'status' => 'approved',
+                ],
+            );
+
+            return response()->json([
+                'message' => 'Cancellation approved successfully',
+                'order_id' => $order->id,
+                'status' => $order->status,
+                'cancellation_status' => 'approved',
+                'order' => \App\Http\Resources\OrderResource::make($order->fresh()->load(['tenant', 'user', 'passengers']))->resolve(),
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Failed to approve cancellation',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function rejectOrderCancellation(Request $request, string $orderId)
+    {
+        try {
+            $validated = $request->validate([
+                'tenantKey' => 'nullable|string|exists:tenants,key',
+                'reason' => 'nullable|string|max:1000',
+            ]);
+
+            $order = Order::findOrFail($orderId);
+            $tenant = $this->resolveTenantFromKey($validated['tenantKey'] ?? null);
+            $this->assertOrderBelongsToTenant($order, $tenant);
+
+            $cancellation = data_get($order->meta, 'cancellation', []);
+            $currentStatus = $this->normalizeWorkflowStatus((string) data_get($cancellation, 'status'));
+
+            if ($currentStatus === 'confirmed') {
+                return response()->json([
+                    'error' => 'Cancellation workflow is already finalized',
+                    'message' => 'This cancellation has already been confirmed.',
+                ], 422);
+            }
+
+            $this->updateOrderCancellationMeta($order, [
+                ...$cancellation,
+                'status' => 'rejected',
+                'rejected_at' => now()->toISOString(),
+                'rejected_by' => $request->user()?->id,
+                'rejection_reason' => $validated['reason'] ?? null,
+            ]);
+
+            $this->activityLogger->log(
+                action: 'order.cancellation_rejected',
+                request: $request,
+                tenant: $order->tenant,
+                actor: $request->user(),
+                subject: $order,
+                title: 'Cancellation rejected',
+                description: "A cancellation was rejected for booking {$order->booking_reference}.",
+                category: 'order',
+                properties: [
+                    'order_id' => $order->id,
+                    'booking_reference' => $order->booking_reference,
+                    'status' => 'rejected',
+                ],
+            );
+
+            return response()->json([
+                'message' => 'Cancellation rejected successfully',
+                'order_id' => $order->id,
+                'status' => $order->status,
+                'cancellation_status' => 'rejected',
+                'order' => \App\Http\Resources\OrderResource::make($order->fresh()->load(['tenant', 'user', 'passengers']))->resolve(),
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Failed to reject cancellation',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
     public function getOrderChange(string $orderChangeId)
     {
         try {
@@ -1204,11 +1515,100 @@ class FlightController extends Controller
                 $payload['payment'] = $validated['payment'];
             }
 
-            return response()->json(
-                $this->imposeDefaultCurrency(
-                    $this->duffel->confirmOrderChange($orderChangeId, $payload)
-                )
-            );
+            $response = $this->duffel->confirmOrderChange($orderChangeId, $payload);
+            $data = $response['data'] ?? $response;
+
+            $order = $this->resolveLocalOrder((string) (
+                data_get($data, 'order_id')
+                ?? data_get($data, 'order.id')
+                ?? data_get($data, 'order.data.id')
+            ));
+
+            if ($order) {
+                $latestOrder = $this->imposeDefaultCurrency(
+                    $this->duffel->getOrder($order->duffel_order_id)
+                );
+                $changeMeta = data_get($order->meta, 'change', []);
+                $confirmedAt = data_get($data, 'confirmed_at')
+                    ?? data_get($latestOrder, 'confirmed_at')
+                    ?? now()->toISOString();
+                $changeStatus = data_get($data, 'status')
+                    ?? data_get($latestOrder, 'status')
+                    ?? 'confirmed';
+
+                $order->update([
+                    'status' => Order::STATUS_RESCHEDULED,
+                    'meta' => $this->mergeOrderMeta($order, [
+                        'duffel_order' => $latestOrder,
+                        'change' => array_filter([
+                            'request_id' => data_get($changeMeta, 'request_id'),
+                            'order_change_id' => data_get($changeMeta, 'order_change_id', $orderChangeId),
+                            'selected_order_change_offer' => data_get($changeMeta, 'selected_order_change_offer'),
+                            'status' => $changeStatus,
+                            'requested_at' => data_get($changeMeta, 'requested_at'),
+                            'change_created_at' => data_get($changeMeta, 'change_created_at'),
+                            'confirmed_at' => $confirmedAt,
+                            'request_payload' => data_get($changeMeta, 'request_payload'),
+                            'request_response' => data_get($changeMeta, 'request_response'),
+                            'change_response' => data_get($changeMeta, 'change_response'),
+                            'confirm_response' => $response,
+                            'previous_order_snapshot' => data_get($changeMeta, 'latest_order_snapshot')
+                                ?? data_get($order->meta, 'duffel_order'),
+                            'latest_order_snapshot' => $latestOrder,
+                            'payment_difference' => data_get($data, 'payment_difference'),
+                            'refund_amount' => data_get($data, 'refund_amount'),
+                            'additional_payment_amount' => data_get($data, 'additional_payment_amount'),
+                        ], fn ($value) => $value !== null && $value !== []),
+                    ]),
+                ]);
+
+                $order->loadMissing(['tenant', 'user']);
+
+                $recipientEmail = $order->user?->email
+                    ?? data_get($order->meta, 'contact_email');
+
+                if ($recipientEmail) {
+                    $htmlBody = view('emails.order-changed', [
+                        'tenant' => $order->tenant?->name ?? config('app.name'),
+                        'name' => $order->user?->name ?? 'Customer',
+                        'order' => $order,
+                        'change' => data_get($order->meta, 'change', []),
+                    ])->render();
+
+                    MailService::sendMail(
+                        $recipientEmail,
+                        ($order->tenant?->name ?? config('app.name')) . ' Booking Rescheduled',
+                        $htmlBody
+                    );
+                }
+
+                $this->activityLogger->log(
+                    action: 'order.change_confirmed',
+                    request: $request,
+                    tenant: $order->tenant,
+                    actor: $request->user(),
+                    subject: $order,
+                    title: 'Reschedule confirmed',
+                    description: "A reschedule was confirmed for booking {$order->booking_reference}.",
+                    category: 'order',
+                    properties: [
+                        'order_id' => $order->id,
+                        'booking_reference' => $order->booking_reference,
+                        'order_change_id' => $orderChangeId,
+                    ],
+                );
+
+                return response()->json([
+                    'message' => 'Order change confirmed successfully',
+                    'order_id' => $order->id,
+                    'status' => $order->status,
+                    'change_status' => $changeStatus,
+                    'data' => $latestOrder,
+                    'summary' => data_get($data, 'summary'),
+                ]);
+            }
+
+            return response()->json($this->imposeDefaultCurrency($response));
         } catch (\Throwable $e) {
             return response()->json([
                 'error' => 'Order change confirmation failed',

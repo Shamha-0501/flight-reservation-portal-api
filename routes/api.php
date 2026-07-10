@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Controllers\ActivityLogController;
+use App\Http\Controllers\AgencyAddonController;
+use App\Http\Controllers\AgencyMarkupController;
 use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
 use App\Http\Controllers\Admin\ReportController as AdminReportController;
 use App\Http\Controllers\Admin\SettingsController as AdminSettingsController;
@@ -50,20 +52,36 @@ Route::post('/orders/{orderId}/refunds/confirm', [FlightController::class, 'conf
 Route::get('/order-changeable-status/{orderId}', [FlightController::class, 'checkOrderChangeable']);
 Route::post('/order-change-requests', [FlightController::class, 'createOrderChangeRequest']);
 Route::get('/order-change-requests/{orderChangeRequestId}', [FlightController::class, 'getOrderChangeRequest']);
+Route::post('/orders/{orderId}/change/approve', [FlightController::class, 'approveOrderChange']);
+Route::post('/orders/{orderId}/change/reject', [FlightController::class, 'rejectOrderChange']);
 
 Route::get('/order-change-offers/{orderChangeOfferId}', [FlightController::class, 'getOrderChangeOffer']);
 
 Route::post('/order-changes', [FlightController::class, 'createOrderChange']);
 Route::get('/order-changes/{orderChangeId}', [FlightController::class, 'getOrderChange']);
 Route::post('/order-changes/{orderChangeId}/confirm', [FlightController::class, 'confirmOrderChange']);
+Route::post('/orders/{orderId}/cancellation/approve', [FlightController::class, 'approveOrderCancellation']);
+Route::post('/orders/{orderId}/cancellation/reject', [FlightController::class, 'rejectOrderCancellation']);
 
 Route::get('/tenants/active', [TenantController::class, 'getActiveTenants']);
 Route::post('/tenant-invitations/accept', [TenantMemberController::class, 'acceptInvitation']);
 
-Route::middleware(['auth:sanctum'])->group(function () {
-    Route::get('/extras', [TenantAddonSettingController::class, 'getTenantAddonSettings'])
-        ->middleware('workspace.access');
+Route::get('/booking/available-addons', [AgencyAddonController::class, 'available']);
+Route::get('/booking/markup', [AgencyMarkupController::class, 'booking']);
+Route::get('/extras', [TenantAddonSettingController::class, 'getTenantAddonSettings']);
 
+Route::middleware(['auth:sanctum'])->group(function () {
+    Route::get('/agency/addons', [AgencyAddonController::class, 'index'])
+        ->middleware(['workspace.access', 'role:tenant_owner,system_developer,super_admin,admin']);
+    Route::put('/agency/addons/{addon}', [AgencyAddonController::class, 'update'])
+        ->middleware(['workspace.access', 'role:tenant_owner,system_developer,super_admin,admin']);
+    Route::post('/agency/addons/{addon}/reset', [AgencyAddonController::class, 'reset'])
+        ->middleware(['workspace.access', 'role:tenant_owner,system_developer,super_admin,admin']);
+    Route::get('/agency/markup', [AgencyMarkupController::class, 'index']);
+    Route::put('/agency/markup', [AgencyMarkupController::class, 'update']);
+});
+
+Route::middleware(['auth:sanctum'])->group(function () {
     Route::prefix('admin')->middleware('role:system_developer,super_admin')->group(function () {
         Route::get('/dashboard', [AdminDashboardController::class, 'index']);
         Route::get('/activities', [ActivityLogController::class, 'adminIndex']);
