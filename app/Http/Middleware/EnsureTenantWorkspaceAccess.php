@@ -71,6 +71,11 @@ class EnsureTenantWorkspaceAccess
             return Tenant::whereKey($tenantId)->first();
         }
 
+        $primaryTenant = $request->user()?->primaryTenant();
+        if ($primaryTenant) {
+            return $primaryTenant;
+        }
+
         return null;
     }
 }
