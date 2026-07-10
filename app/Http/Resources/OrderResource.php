@@ -14,6 +14,19 @@ class OrderResource extends JsonResource
             'id' => $this->id,
 
             'tenant_id' => $this->tenant_id,
+            'tenant_key' => $this->whenLoaded('tenant', function () {
+                return $this->tenant?->key;
+            }),
+            'tenant_name' => $this->whenLoaded('tenant', function () {
+                return $this->tenant?->name;
+            }),
+            'tenant' => $this->whenLoaded('tenant', function () {
+                return [
+                    'id' => $this->tenant?->id,
+                    'key' => $this->tenant?->key,
+                    'name' => $this->tenant?->name,
+                ];
+            }),
 
             'user' => $this->whenLoaded('user', function () {
                 return [
@@ -77,6 +90,8 @@ class OrderResource extends JsonResource
                 'offer' => app(CurrencyConverter::class)->convertPayload($this->meta['offer'] ?? null),
                 'duffel_order' => app(CurrencyConverter::class)->convertPayload($this->meta['duffel_order'] ?? null),
                 'cancellation' => app(CurrencyConverter::class)->convertPayload($this->meta['cancellation'] ?? null),
+                'change' => app(CurrencyConverter::class)->convertPayload($this->meta['change'] ?? null),
+                'agency_markup' => app(CurrencyConverter::class)->convertPayload($this->meta['agency_markup'] ?? null),
             ],
 
             'created_at' => $this->created_at,

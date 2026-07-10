@@ -14,6 +14,7 @@ class Order extends Model
     protected $table = 'orders';
 
     public const STATUS_BOOKED = 'Booked';
+    public const STATUS_RESCHEDULED = 'Rescheduled';
     public const STATUS_CANCELLATION_REQUESTED = 'Cancellation Requested';
     public const STATUS_CANCELLED = 'Cancelled';
     public const STATUS_REFUNDED = 'Refunded';
@@ -88,5 +89,15 @@ class Order extends Model
     public function passengers(): HasMany
     {
         return $this->hasMany(Passenger::class);
+    }
+
+    public function addons(): HasMany
+    {
+        return $this->hasMany(BookingAddon::class);
+    }
+
+    public function addonSummary(): HasMany
+    {
+        return $this->hasMany(OrderAddon::class);
     }
 }
