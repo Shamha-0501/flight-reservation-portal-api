@@ -51,12 +51,24 @@ class OrderResource extends JsonResource
                     'amount' => $this->moneyAmount('base_amount', 'base_currency'),
                     'currency' => $this->currencyCode('base_currency'),
                 ],
+
                 'tax' => [
                     'amount' => $this->moneyAmount('tax_amount', 'tax_currency'),
                     'currency' => $this->currencyCode('tax_currency'),
                 ],
-                'total' => [
+
+                'order_total' => [
                     'amount' => $this->moneyAmount('total_amount', 'total_currency'),
+                    'currency' => $this->currencyCode('total_currency'),
+                ],
+
+                'addons_total' => [
+                    'amount' => $this->addonsTotalAmount(),
+                    'currency' => $this->currencyCode('total_currency'),
+                ],
+
+                'grand_total' => [
+                    'amount' => $this->grandTotalAmount(),
                     'currency' => $this->currencyCode('total_currency'),
                 ],
             ],
@@ -65,7 +77,7 @@ class OrderResource extends JsonResource
             'synced_at' => $this->synced_at,
 
             'passengers' => $this->whenLoaded('passengers', function () {
-                return $this->passengers->map(fn ($passenger) => [
+                return $this->passengers->map(fn($passenger) => [
                     'id' => $passenger->id,
                     'duffel_passenger_id' => $passenger->duffel_passenger_id,
                     'type' => $passenger->type,
@@ -99,16 +111,55 @@ class OrderResource extends JsonResource
         ];
     }
 
+    private function sourceCurrency(string $currencyKey): string
+    {
+        return $this->getRawOriginal($currencyKey)
+            ?: config('finance.default_currency', 'LKR');
+    }
+
     private function moneyAmount(string $amountKey, string $currencyKey): ?string
     {
         $amount = $this->getRawOriginal($amountKey) ?? $this->{$amountKey};
-        $currency = $this->currencyCode($currencyKey);
 
-        return app(CurrencyConverter::class)->convertAmount($amount, $currency);
+        return app(CurrencyConverter::class)->convertAmount(
+            $amount,
+            $this->sourceCurrency($currencyKey)
+        );
     }
 
     private function currencyCode(string $currencyKey): string
     {
         return config('finance.default_currency', 'LKR');
+    }
+
+    private function addonsTotalAmount(): ?string
+    {
+        $amount = $this->addons_total_amount ?? 0;
+
+        return app(CurrencyConverter::class)->convertAmount(
+            $amount,
+            $this->sourceCurrency('total_currency')
+        );
+    }
+
+    private function grandTotalAmount(): ?string
+    {
+        $orderAmount = $this->getRawOriginal('total_amount')
+            ?? $this->total_amount
+            ?? 0;
+
+        $addonsAmount = $this->addons_total_amount ?? 0;
+
+        $grandTotal = number_format(
+            (float) $orderAmount + (float) $addonsAmount,
+            2,
+            '.',
+            ''
+        );
+
+        return app(CurrencyConverter::class)->convertAmount(
+            $grandTotal,
+            $this->sourceCurrency('total_currency')
+        );
     }
 }

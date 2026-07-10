@@ -27,8 +27,13 @@ class OrderController extends Controller
                 'user',
                 'passengers',
                 'addons',
+                'addonSummary',
                 'tenant',
             ])
+            ->withSum(
+                'addonSummary as addons_total_amount',
+                'total_addons_amount'
+            )
             ->latest();
 
         if (! empty($validated['tenantKey'])) {
@@ -44,7 +49,9 @@ class OrderController extends Controller
             return response()->json([
                 'message' => 'An authenticated customer account or tenant key is required.',
                 'errors' => [
-                    'tenantKey' => ['An authenticated customer account or tenant key is required.'],
+                    'tenantKey' => [
+                        'An authenticated customer account or tenant key is required.',
+                    ],
                 ],
             ], 422);
         }
@@ -74,7 +81,10 @@ class OrderController extends Controller
         }
 
         if (! empty($validated['cancellation_status'])) {
-            $query->where('cancellation_status', $validated['cancellation_status']);
+            $query->where(
+                'cancellation_status',
+                $validated['cancellation_status']
+            );
         }
 
         if (! empty($validated['refund_status'])) {
@@ -83,8 +93,11 @@ class OrderController extends Controller
 
         if (($validated['cancellation_scope'] ?? null) === 'all') {
             $query->where(function ($q) {
-                $q->where('cancellation_status', '!=', Order::CANCELLATION_STATUS_NONE)
-                    ->orWhereNotNull('refund_status');
+                $q->where(
+                    'cancellation_status',
+                    '!=',
+                    Order::CANCELLATION_STATUS_NONE
+                )->orWhereNotNull('refund_status');
             });
         }
 
@@ -107,7 +120,7 @@ class OrderController extends Controller
         } else {
             abort_if(
                 ! empty($request->query('email')) &&
-                optional($order->user)->email !== $request->query('email'),
+                    optional($order->user)->email !== $request->query('email'),
                 404
             );
         }

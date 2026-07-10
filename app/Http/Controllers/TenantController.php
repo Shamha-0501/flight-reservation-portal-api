@@ -16,25 +16,20 @@ class TenantController extends Controller
         //     ->get();
 
         $tenants = Tenant::query()
-            ->leftJoin('agency_markup_settings as ams', 'tenants.id', '=', 'ams.tenant_id')
-            ->where('tenants.status', 'active')
-            ->select([
-                'tenants.id',
-                'tenants.key',
-                'tenants.name',
-                'tenants.status',
-                'tenants.timezone',
-                'tenants.locale',
-                'tenants.trial_ends_at',
-                'tenants.suspended_at',
-                'tenants.created_by_user_id',
-                'tenants.meta',
-                'ams.markup_mode',
-                'ams.markup_value',
-                'ams.currency'
+            ->where('status', 'active')
+            ->with([
+                'markupSetting' => function ($query) {
+                    $query->select([
+                        'agency_markup_settings.id',
+                        'agency_markup_settings.tenant_id',
+                        'agency_markup_settings.markup_mode',
+                        'agency_markup_settings.markup_value',
+                        'agency_markup_settings.currency',
+                    ]);
+                },
             ])
             ->withCount('users')
-            ->latest('tenants.created_at')
+            ->latest('created_at')
             ->get();
 
         return response()->json([

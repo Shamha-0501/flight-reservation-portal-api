@@ -20,9 +20,7 @@ use App\Models\UserAuthToken;
 
 class AuthController extends Controller
 {
-    public function __construct(private readonly ActivityLogger $activityLogger)
-    {
-    }
+    public function __construct(private readonly ActivityLogger $activityLogger) {}
 
     /**
      * Cookie-based signup (session auth).
@@ -77,19 +75,43 @@ class AuthController extends Controller
             'first_name' => ['required', 'string', 'max:100'],
             'last_name' => ['required', 'string', 'max:100'],
             'name' => ['required', 'string', 'max:190'],
-            'email' => ['required', 'email', 'max:190', 'unique:users,email'],
+            'email' => ['required', 'email', 'max:190'],
             'phone' => ['required', 'string', 'max:40'],
             'password' => ['required', 'confirmed', Password::defaults()],
             'role' => ['required', 'in:customer'],
             'terms' => ['accepted'],
         ]);
 
-        $user = User::create([
-            'name' => $validated['name'],
-            'email' => $validated['email'],
-            'password' => Hash::make($validated['password']),
-            'account_state' => 'account',
-        ]);
+        $user = User::query()
+            ->where('email', $validated['email'])
+            ->first();
+
+        if ($user) {
+            if (
+                $user->account_state === 'order_verified_only'
+                && $user->name === 'Guest User'
+            ) {
+                $user->update([
+                    'name' => $validated['name'],
+                    'password' => Hash::make($validated['password']),
+                    'account_state' => 'account',
+                ]);
+            } else {
+                return back()
+                    ->withErrors([
+                        'email' => 'An account already exists with this email address.',
+                    ])
+                    ->withInput();
+            }
+        } else {
+            $user = User::create([
+                'name' => $validated['name'],
+                'email' => $validated['email'],
+                'password' => Hash::make($validated['password']),
+                'account_state' => 'account',
+            ]);
+        }
+
 
         return response()->json([
             'ok' => true,

@@ -14,7 +14,7 @@ class TenantResource extends JsonResource
             'key' => $this->key,
             'name' => $this->name,
             'status' => $this->status,
-            'is_active' => true,
+            'is_active' => $this->status === 'active',
             'timezone' => $this->timezone,
             'locale' => $this->locale,
             'trial_ends_at' => $this->trial_ends_at,
@@ -24,9 +24,9 @@ class TenantResource extends JsonResource
             'member_count' => $this->users_count,
 
             'markup' => [
-                'mode' => $this->markup_mode,
-                'value' => $this->markup_value,
-                'currency' => $this->markup_currency,
+                'mode' => $this->markupSetting?->markup_mode,
+                'value' => $this->markupSetting?->markup_value,
+                'currency' => $this->markupSetting?->currency,
             ],
 
             'created_at' => $this->created_at,

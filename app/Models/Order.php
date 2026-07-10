@@ -100,4 +100,24 @@ class Order extends Model
     {
         return $this->hasMany(OrderAddon::class);
     }
+
+    public function getAddonsAmountAttribute(): string
+    {
+        return number_format(
+            (float) $this->addon_summary->sum('total_addons_amount'),
+            2,
+            '.',
+            ''
+        );
+    }
+
+    public function getGrandTotalAttribute(): string
+    {
+        return number_format(
+            (float) $this->total_amount + (float) $this->addons_amount,
+            2,
+            '.',
+            ''
+        );
+    }
 }

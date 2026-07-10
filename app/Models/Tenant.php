@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 
@@ -75,6 +76,12 @@ class Tenant extends Model
     public function isRejected(): bool
     {
         return $this->status === 'rejected';
+    }
+
+    public function markupSetting(): HasOne
+    {
+        return $this->hasOne(AgencyMarkupSetting::class)
+            ->latestOfMany();
     }
 
     protected static function booted(): void
