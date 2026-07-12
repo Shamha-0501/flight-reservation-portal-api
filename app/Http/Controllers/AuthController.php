@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\UserResource;
+use App\Jobs\SendBladeMail;
 use App\Models\Role;
 use App\Models\Tenant;
 use App\Models\TenantUser;
@@ -34,7 +35,7 @@ class AuthController extends Controller
             'password' => ['required', 'confirmed', Password::defaults()],
         ]);
 
-        $user = DB::transaction(function () use ($validated) {
+        [$user, $tenant] = DB::transaction(function () use ($validated) {
             $user = User::create([
                 'name'     => $validated['name'],
                 'email'    => $validated['email'],
@@ -57,11 +58,24 @@ class AuthController extends Controller
                 'invited_by_user_id' => $user->id,
             ]);
 
-            return $user;
+            return [$user, $tenant];
         });
 
         Auth::guard('web')->login($user);
         $request->session()->regenerate();
+
+        SendBladeMail::dispatch(
+            recipientEmail: $user->email,
+            subject: 'Welcome to ' . ($tenant->name ?? config('app.name')),
+            view: 'emails.tenant-welcome',
+            data: [
+                'name' => $user->name,
+                'tenantName' => $tenant->name ?? config('app.name'),
+                'tenantKey' => $tenant->key ?? null,
+                'dashboardUrl' => rtrim(config('app.frontend_url'), '/') . '/admin',
+            ],
+            logLabel: 'tenant welcome'
+        );
 
         return response()->json([
             'ok'   => true,
@@ -112,6 +126,18 @@ class AuthController extends Controller
             ]);
         }
 
+
+        SendBladeMail::dispatch(
+            recipientEmail: $user->email,
+            subject: 'Welcome to ' . config('app.name'),
+            view: 'emails.customer-welcome',
+            data: [
+                'name' => $user->name,
+                'appName' => config('app.name'),
+                'dashboardUrl' => rtrim(config('app.frontend_url'), '/'),
+            ],
+            logLabel: 'customer welcome'
+        );
 
         return response()->json([
             'ok' => true,
@@ -195,6 +221,43 @@ class AuthController extends Controller
                 'status' => $tenant->status,
                 'business_email' => $tenant->meta['business_email'] ?? null,
             ],
+        );
+
+        SendBladeMail::dispatch(
+            recipientEmail: $user->email,
+            subject: $tenant->name . ' registration received',
+            view: 'emails.agency-registration-pending',
+            data: [
+                'name' => $user->name,
+                'agencyName' => $tenant->name,
+                'businessEmail' => $validated['business_email'],
+                'dashboardUrl' => rtrim(config('app.frontend_url'), '/') . '/login',
+            ],
+            logLabel: 'agency registration'
+        );
+
+        SendBladeMail::dispatch(
+            recipientEmail: config('mail.admin_notification_address'),
+            subject: 'New agency registration pending approval',
+            view: 'emails.admin-agency-registration-alert',
+            data: [
+                'agencyName' => $tenant->name,
+                'ownerName' => $user->name,
+                'ownerEmail' => $user->email,
+                'businessEmail' => $validated['business_email'],
+                'businessPhone' => $validated['business_phone'],
+                'country' => $validated['country'],
+                'city' => $validated['city'],
+                'address' => $validated['address'] ?? null,
+                'description' => $validated['description'] ?? null,
+                'tenantKey' => $tenant->key,
+                'status' => $tenant->status,
+            ],
+            logLabel: 'agency registration alert',
+            context: [
+                'tenant_id' => $tenant->id,
+                'tenant_key' => $tenant->key,
+            ]
         );
 
         return response()->json([

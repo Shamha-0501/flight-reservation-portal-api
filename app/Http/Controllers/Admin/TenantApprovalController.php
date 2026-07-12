@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\TenantResource;
+use App\Jobs\SendBladeMail;
 use App\Models\Tenant;
+use App\Models\User;
 use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 
@@ -35,6 +37,22 @@ class TenantApprovalController extends Controller
             'suspended_at' => null,
         ])->save();
 
+        $recipient = User::find($tenant->created_by_user_id);
+        if ($recipient?->email) {
+            SendBladeMail::dispatch(
+                recipientEmail: $recipient->email,
+                subject: $tenant->name . ' has been approved',
+                view: 'emails.tenant-approved',
+                data: [
+                    'name' => $recipient->name,
+                    'tenantName' => $tenant->name,
+                    'tenantKey' => $tenant->key,
+                    'dashboardUrl' => rtrim(config('app.frontend_url'), '/') . '/admin',
+                ],
+                logLabel: 'tenant approval'
+            );
+        }
+
         $this->activityLogger->log(
             action: 'tenant.approved',
             request: $request,
@@ -62,6 +80,22 @@ class TenantApprovalController extends Controller
             'status' => 'rejected',
             'suspended_at' => null,
         ])->save();
+
+        $recipient = User::find($tenant->created_by_user_id);
+        if ($recipient?->email) {
+            SendBladeMail::dispatch(
+                recipientEmail: $recipient->email,
+                subject: $tenant->name . ' registration update',
+                view: 'emails.tenant-rejected',
+                data: [
+                    'name' => $recipient->name,
+                    'tenantName' => $tenant->name,
+                    'tenantKey' => $tenant->key,
+                    'dashboardUrl' => rtrim(config('app.frontend_url'), '/') . '/login',
+                ],
+                logLabel: 'tenant rejection'
+            );
+        }
 
         $this->activityLogger->log(
             action: 'tenant.rejected',

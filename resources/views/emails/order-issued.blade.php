@@ -1,80 +1,29 @@
-<!DOCTYPE html>
-<html>
+<x-email-layout
+    title="Booking Confirmed"
+    heading="Booking Confirmed"
+    subtitle="Your flight order has been successfully issued."
+    :footer-name="$tenant"
+>
+    <p>Hello {{ $name ?? 'Customer' }},</p>
+    <p>Thank you for booking with <strong>{{ $tenant }}</strong>. Your booking reference PDF is attached to this email.</p>
 
-<head>
-    <meta charset="UTF-8">
-    <title>Booking Confirmed</title>
-</head>
+    <x-slot:details>
+        <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border-radius:10px;padding:20px;">
+            <tr>
+                <td style="color:#6b7280;font-size:14px;">Booking Reference</td>
+                <td align="right" style="color:#111827;font-size:18px;font-weight:bold;">{{ $order->booking_reference ?? 'N/A' }}</td>
+            </tr>
+            <tr>
+                <td style="padding-top:12px;color:#6b7280;font-size:14px;">Order Status</td>
+                <td align="right" style="padding-top:12px;color:#111827;font-weight:bold;">{{ ucfirst($order->status ?? 'created') }}</td>
+            </tr>
+            <tr>
+                <td style="padding-top:12px;color:#6b7280;font-size:14px;">Total Amount</td>
+                <td align="right" style="padding-top:12px;color:#111827;font-weight:bold;">{{ $order->total_currency }} {{ $order->total_amount }}</td>
+            </tr>
+        </table>
+    </x-slot:details>
 
-<body style="margin:0;padding:0;background:#f4f7fb;font-family:Arial,sans-serif;">
-    <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
-        <tr>
-            <td align="center">
-                <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;padding:40px;">
-                    <tr>
-                        <td align="center">
-                            <h1 style="margin:0;color:#111827;font-size:28px;">Booking Confirmed</h1>
-                            <p style="color:#6b7280;margin-top:8px;">Your flight order has been successfully issued.</p>
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <td style="padding-top:24px;color:#374151;font-size:16px;line-height:26px;">
-                            <p>Hello {{ $name ?? 'Customer' }},</p>
-
-                            <p>
-                                Thank you for booking with <strong>{{ $tenant }}</strong>.
-                                Your booking reference PDF is attached to this email.
-                            </p>
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <td style="padding:24px 0;">
-                            <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border-radius:10px;padding:20px;">
-                                <tr>
-                                    <td style="color:#6b7280;font-size:14px;">Booking Reference</td>
-                                    <td align="right" style="color:#111827;font-size:18px;font-weight:bold;">
-                                        {{ $order->booking_reference ?? 'N/A' }}
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding-top:12px;color:#6b7280;font-size:14px;">Order Status</td>
-                                    <td align="right" style="padding-top:12px;color:#111827;font-weight:bold;">
-                                        {{ ucfirst($order->status ?? 'created') }}
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding-top:12px;color:#6b7280;font-size:14px;">Total Amount</td>
-                                    <td align="right" style="padding-top:12px;color:#111827;font-weight:bold;">
-                                        {{ $order->total_currency }} {{ $order->total_amount }}
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <td style="color:#6b7280;font-size:14px;line-height:24px;">
-                            <p>
-                                Please keep this email and attached PDF for your records.
-                            </p>
-
-                            <p>
-                                If you need to view, modify, or cancel your booking, use your booking reference.
-                            </p>
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <td style="padding-top:32px;color:#9ca3af;font-size:13px;">
-                            <p style="margin:0;">© {{ date('Y') }} {{ $tenant }}. All rights reserved.</p>
-                        </td>
-                    </tr>
-                </table>
-            </td>
-        </tr>
-    </table>
-</body>
-
-</html>
+    <p>Please keep this email and attached PDF for your records.</p>
+    <p>If you need to view, modify, or cancel your booking, use your booking reference.</p>
+</x-email-layout>

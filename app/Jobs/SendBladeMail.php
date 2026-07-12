@@ -10,7 +10,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 
-class SendTenantInvitationMail implements ShouldQueue
+class SendBladeMail implements ShouldQueue
 {
     use Dispatchable;
     use InteractsWithQueue;
@@ -22,37 +22,42 @@ class SendTenantInvitationMail implements ShouldQueue
     public function __construct(
         public string $recipientEmail,
         public string $subject,
-        public string $htmlBody,
-        public int $tenantId,
-        public int $invitationId,
+        public string $view,
+        public array $data = [],
+        public ?string $pdfContent = null,
+        public ?string $pdfName = null,
+        public string $logLabel = 'mail',
+        public array $context = [],
     ) {
     }
 
     public function handle(): void
     {
+        $htmlBody = view($this->view, $this->data)->render();
+
         $result = MailService::sendMail(
             $this->recipientEmail,
             $this->subject,
-            $this->htmlBody
+            $htmlBody,
+            $this->pdfContent,
+            $this->pdfName ?? 'attachment.pdf'
         );
 
         if (! ($result['ok'] ?? false)) {
-            Log::error('Tenant invitation mail send failed.', [
-                'tenant_id' => $this->tenantId,
+            Log::error("{$this->logLabel} mail send failed.", array_merge($this->context, [
                 'email' => $this->recipientEmail,
-                'invitation_id' => $this->invitationId,
+                'subject' => $this->subject,
                 'error' => $result['message'] ?? 'Unknown mail error',
-            ]);
+            ]));
         }
     }
 
     public function failed(\Throwable $exception): void
     {
-        Log::error('Tenant invitation mail job failed.', [
-            'tenant_id' => $this->tenantId,
+        Log::error("{$this->logLabel} mail job failed.", array_merge($this->context, [
             'email' => $this->recipientEmail,
-            'invitation_id' => $this->invitationId,
+            'subject' => $this->subject,
             'error' => $exception->getMessage(),
-        ]);
+        ]));
     }
 }
