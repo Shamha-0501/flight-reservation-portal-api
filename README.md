@@ -21,6 +21,29 @@ Laravel is a web application framework with expressive, elegant syntax. We belie
 
 Laravel is accessible, powerful, and provides tools required for large, robust applications.
 
+## Docker
+
+This project ships with a Docker setup that serves the API through nginx on port 80.
+
+1. Make sure `.env` points database and Redis hosts to the container services:
+   - `DB_HOST=mysql`
+   - `REDIS_HOST=redis`
+   - If you are starting from the example env files, the Docker defaults use `sail` / `password` for the MySQL user.
+2. Set `APP_URL` to the IP or hostname you will use from the browser or client.
+3. Start the stack:
+
+```bash
+docker compose up -d --build
+```
+
+4. Run migrations if needed:
+
+```bash
+docker compose exec app php artisan migrate --force
+```
+
+The API will then be reachable at `http://<server-ip>/...` on port 80.
+
 ## Learning Laravel
 
 Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
