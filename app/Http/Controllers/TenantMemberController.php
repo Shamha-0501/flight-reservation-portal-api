@@ -5,7 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Resources\TenantInvitationResource;
 use App\Http\Resources\TenantMemberResource;
 use App\Http\Resources\UserResource;
-use App\Jobs\SendTenantInvitationMail;
+use App\Jobs\SendBladeMail;
 use App\Models\Role;
 use App\Models\Tenant;
 use App\Models\TenantInvitation;
@@ -262,6 +262,24 @@ class TenantMemberController extends Controller
             'accepted_at' => now(),
         ])->save();
 
+        SendBladeMail::dispatch(
+            recipientEmail: $user->email,
+            subject: 'Welcome to ' . ($membership->tenant?->name ?? config('app.name')),
+            view: 'emails.tenant-member-welcome',
+            data: [
+                'name' => $user->name,
+                'tenantName' => $membership->tenant?->name ?? config('app.name'),
+                'roleName' => $invitation->role?->name ?? $invitation->role?->key ?? 'Member',
+                'dashboardUrl' => rtrim(config('app.frontend_url'), '/') . '/admin',
+            ],
+            logLabel: 'tenant member welcome',
+            context: [
+                'tenant_id' => $membership->tenant_id,
+                'tenant_user_id' => $membership->id,
+                'invitation_id' => $invitation->id,
+            ]
+        );
+
         $this->activityLogger->log(
             action: 'tenant.invitation_accepted',
             request: $request,
@@ -362,22 +380,22 @@ class TenantMemberController extends Controller
 
     private function dispatchInvitationMail(Tenant $tenant, TenantInvitation $invitation, string $plainToken): void
     {
-        $subject = "{$tenant->name} workspace invitation";
-        $inviteUrl = $this->invitationUrl($plainToken, $invitation->email);
-        $roleLabel = $invitation->role?->name ?? $invitation->role?->key ?? 'Member';
-        $htmlBody = sprintf(
-            '<p>You have been invited to join <strong>%s</strong> as <strong>%s</strong>.</p><p><a href="%s">Accept invitation</a></p>',
-            e($tenant->name),
-            e($roleLabel),
-            e($inviteUrl)
-        );
-
-        SendTenantInvitationMail::dispatch(
+        SendBladeMail::dispatch(
             recipientEmail: $invitation->email,
-            subject: $subject,
-            htmlBody: $htmlBody,
-            tenantId: $tenant->id,
-            invitationId: $invitation->id,
+            subject: "{$tenant->name} workspace invitation",
+            view: 'emails.tenant-invitation',
+            data: [
+                'name' => $invitation->email,
+                'tenantName' => $tenant->name,
+                'roleName' => $invitation->role?->name ?? $invitation->role?->key ?? 'Member',
+                'inviteUrl' => $this->invitationUrl($plainToken, $invitation->email),
+                'expiresAt' => $invitation->expires_at?->format('M d, Y h:i A'),
+            ],
+            logLabel: 'tenant invitation',
+            context: [
+                'tenant_id' => $tenant->id,
+                'invitation_id' => $invitation->id,
+            ]
         );
     }
 

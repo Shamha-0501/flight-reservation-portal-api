@@ -9,6 +9,7 @@ use App\Models\Tenant;
 use App\Models\User;
 use App\Services\ActivityLogger;
 use App\Services\CurrencyConverter;
+use App\Jobs\SendBladeMail;
 use Illuminate\Http\Request;
 use App\Services\Duffel\DuffelService;
 use App\Services\MailService;
@@ -773,6 +774,29 @@ class FlightController extends Controller
                 ],
             );
 
+            $orderRecipient = User::find($order->user_id);
+            if ($orderRecipient?->email) {
+                SendBladeMail::dispatch(
+                    recipientEmail: $orderRecipient->email,
+                    subject: 'Your booking has been cancelled',
+                    view: 'emails.cancellation-confirmed',
+                    data: [
+                        'name' => $orderRecipient->name ?? 'Customer',
+                        'tenantName' => $order->tenant?->name ?? config('app.name'),
+                        'bookingReference' => $order->booking_reference,
+                        'cancellationStatus' => Order::CANCELLATION_STATUS_CANCELLED,
+                        'refundStatus' => $refundStatus,
+                        'refundAmount' => $confirmedSummary['refund_amount'],
+                        'refundCurrency' => $confirmedSummary['refund_currency'],
+                    ],
+                    logLabel: 'order cancellation',
+                    context: [
+                        'order_id' => $order->id,
+                        'booking_reference' => $order->booking_reference,
+                    ]
+                );
+            }
+
             return response()->json([
                 'message' => 'Order cancellation confirmed successfully',
                 'order_id' => $order->id,
@@ -855,6 +879,28 @@ class FlightController extends Controller
                     'refund_status' => Order::REFUND_STATUS_REFUNDED,
                 ],
             );
+
+            $orderRecipient = User::find($order->user_id);
+            if ($orderRecipient?->email) {
+                SendBladeMail::dispatch(
+                    recipientEmail: $orderRecipient->email,
+                    subject: 'Your refund has been confirmed',
+                    view: 'emails.refund-confirmed',
+                    data: [
+                        'name' => $orderRecipient->name ?? 'Customer',
+                        'tenantName' => $order->tenant?->name ?? config('app.name'),
+                        'bookingReference' => $order->booking_reference,
+                        'refundStatus' => Order::REFUND_STATUS_REFUNDED,
+                        'reference' => $validated['reference'] ?? null,
+                        'notes' => $validated['notes'] ?? null,
+                    ],
+                    logLabel: 'order refund',
+                    context: [
+                        'order_id' => $order->id,
+                        'booking_reference' => $order->booking_reference,
+                    ]
+                );
+            }
 
             return response()->json([
                 'message' => 'Refund confirmed successfully',
@@ -1088,6 +1134,26 @@ class FlightController extends Controller
                         'request_id' => data_get($data, 'id'),
                     ],
                 );
+
+                $orderRecipient = User::find($order->user_id);
+                if ($orderRecipient?->email) {
+                    SendBladeMail::dispatch(
+                        recipientEmail: $orderRecipient->email,
+                        subject: 'Your reschedule request was received',
+                        view: 'emails.reschedule-requested',
+                        data: [
+                            'name' => $orderRecipient->name ?? 'Customer',
+                            'tenantName' => $order->tenant?->name ?? config('app.name'),
+                            'bookingReference' => $order->booking_reference,
+                            'requestId' => data_get($data, 'id'),
+                        ],
+                        logLabel: 'order reschedule request',
+                        context: [
+                            'order_id' => $order->id,
+                            'booking_reference' => $order->booking_reference,
+                        ]
+                    );
+                }
             }
 
             return response()->json($response);
@@ -1165,6 +1231,26 @@ class FlightController extends Controller
                         'order_change_id' => data_get($data, 'id'),
                     ],
                 );
+
+                $orderRecipient = User::find($order->user_id);
+                if ($orderRecipient?->email) {
+                    SendBladeMail::dispatch(
+                        recipientEmail: $orderRecipient->email,
+                        subject: 'Your updated itinerary is ready',
+                        view: 'emails.reschedule-confirmed',
+                        data: [
+                            'name' => $orderRecipient->name ?? 'Customer',
+                            'tenantName' => $order->tenant?->name ?? config('app.name'),
+                            'bookingReference' => $order->booking_reference,
+                            'orderChangeId' => data_get($data, 'id'),
+                        ],
+                        logLabel: 'order reschedule confirmed',
+                        context: [
+                            'order_id' => $order->id,
+                            'booking_reference' => $order->booking_reference,
+                        ]
+                    );
+                }
             }
 
             return response()->json($this->imposeDefaultCurrency($response));
