@@ -23,13 +23,13 @@ Laravel is accessible, powerful, and provides tools required for large, robust a
 
 ## Docker
 
-This project ships with a Docker setup that serves the API through nginx on port 80.
+This project ships with a Docker setup that serves the API through nginx on port 8000.
 
 1. Make sure `.env` points database and Redis hosts to the container services:
    - `DB_HOST=mysql`
    - `REDIS_HOST=redis`
    - If you are starting from the example env files, the Docker defaults use `sail` / `password` for the MySQL user.
-2. Set `APP_URL` to the IP or hostname you will use from the browser or client.
+2. Set `APP_URL` to the IP address you will use from the browser or client, for example `http://192.168.1.10:8000`.
 3. Start the stack:
 
 ```bash
@@ -42,7 +42,7 @@ docker compose up -d --build
 docker compose exec app php artisan migrate --force
 ```
 
-The API will then be reachable at `http://<server-ip>/...` on port 80.
+The API will then be reachable at `http://<server-ip>:8000/...`.
 
 ## Learning Laravel
 
