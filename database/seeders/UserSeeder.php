@@ -20,8 +20,8 @@ class UserSeeder extends Seeder
                 'remember_token' => null,
             ],
             [
-                'name' => 'Sara',
-                'email' => 'Sara@gmail.com',
+                'name' => 'farvees',
+                'email' => 'farvees@gmail.com',
                 'email_verified_at' => now(),
                 'password' => Hash::make('password'),
                 'remember_token' => null,
