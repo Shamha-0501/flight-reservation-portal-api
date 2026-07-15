@@ -71,6 +71,11 @@ class OrderResource extends JsonResource
                     'amount' => $this->grandTotalAmount(),
                     'currency' => $this->currencyCode('total_currency'),
                 ],
+
+                'total' => [
+                    'amount' => $this->grandTotalAmount(),
+                    'currency' => $this->currencyCode('total_currency'),
+                ],
             ],
 
             'void_window_ends_at' => $this->void_window_ends_at,

@@ -381,6 +381,60 @@ class FlightController extends Controller
                     ], 422);
                 }
 
+                $duffelPassengers = array_map(
+                    function (array $passenger) {
+                        unset($passenger['infant_passenger_id']);
+                        return $passenger;
+                    },
+                    $validated['passengers']
+                );
+
+                $adultPassengerIds = [];
+                $infantPassengerIds = [];
+                $infantLinks = [];
+
+                foreach ($validated['passengers'] as $passenger) {
+                    $passengerId = $passenger['id'] ?? null;
+
+                    if (!is_string($passengerId) || $passengerId === '') {
+                        continue;
+                    }
+
+                    if (($passenger['type'] ?? null) === 'adult') {
+                        $adultPassengerIds[] = $passengerId;
+                        continue;
+                    }
+
+                    if (($passenger['type'] ?? null) !== 'infant_without_seat') {
+                        continue;
+                    }
+
+                    $infantPassengerIds[] = $passengerId;
+
+                    $adultId = $passenger['infant_passenger_id'] ?? null;
+                    if (is_string($adultId) && $adultId !== '') {
+                        $infantLinks[$adultId] = $passengerId;
+                    }
+                }
+
+                if (empty($infantLinks) && !empty($adultPassengerIds) && !empty($infantPassengerIds)) {
+                    foreach ($infantPassengerIds as $index => $infantPassengerId) {
+                        $adultPassengerId = $adultPassengerIds[$index] ?? $adultPassengerIds[0];
+
+                        if (is_string($adultPassengerId) && $adultPassengerId !== '') {
+                            $infantLinks[$adultPassengerId] = $infantPassengerId;
+                        }
+                    }
+                }
+
+                foreach ($duffelPassengers as &$passenger) {
+                    $passengerId = $passenger['id'] ?? null;
+                    if (($passenger['type'] ?? null) === 'adult' && is_string($passengerId) && isset($infantLinks[$passengerId])) {
+                        $passenger['infant_passenger_id'] = $infantLinks[$passengerId];
+                    }
+                }
+                unset($passenger);
+
                 $payload = [
                     'selected_offers' => [$validated['offer_id']],
                     'payments' => [
@@ -390,7 +444,7 @@ class FlightController extends Controller
                             'currency' => $offer['total_currency'] ?? null,
                         ],
                     ],
-                    'passengers' => $validated['passengers'],
+                    'passengers' => $duffelPassengers,
                 ];
 
                 $duffelOrderResponse = $this->duffel->createOrder($payload);
