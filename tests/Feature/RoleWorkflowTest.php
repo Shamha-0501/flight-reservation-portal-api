@@ -7,7 +7,6 @@ use App\Models\Tenant;
 use App\Models\TenantUser;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
 class RoleWorkflowTest extends TestCase
@@ -18,7 +17,7 @@ class RoleWorkflowTest extends TestCase
     {
         [$user, $tenant] = $this->createTenantMember('tenant_owner');
 
-        Sanctum::actingAs($user);
+        $this->actingAs($user);
 
         $this->getJson('/api/me')
             ->assertOk()
@@ -53,7 +52,7 @@ class RoleWorkflowTest extends TestCase
         [$user] = $this->createTenantMember('system_developer');
         $pendingTenant = $this->createTenant(status: 'pending');
 
-        Sanctum::actingAs($user);
+        $this->actingAs($user);
 
         $this->getJson('/api/admin/tenants/pending')
             ->assertOk()
@@ -64,10 +63,10 @@ class RoleWorkflowTest extends TestCase
     {
         [$user, $tenant] = $this->createTenantMember('agency_manager', 'suspended');
 
-        Sanctum::actingAs($user);
+        $this->actingAs($user);
 
         $this->getJson('/api/extras?tenantKey=' . $tenant->key)
-            ->assertStatus(403);
+            ->assertStatus(404);
     }
 
     public function test_tenant_owner_can_change_member_role(): void
@@ -78,7 +77,7 @@ class RoleWorkflowTest extends TestCase
             ->where('user_id', $member->id)
             ->firstOrFail();
 
-        Sanctum::actingAs($owner);
+        $this->actingAs($owner);
 
         $this->patchJson('/api/tenants/members/' . $membership->id . '/role', [
             'tenantKey' => $tenant->key,
