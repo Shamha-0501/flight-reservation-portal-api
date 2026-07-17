@@ -87,6 +87,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/activities', [ActivityLogController::class, 'adminIndex']);
         Route::get('/reports', [AdminReportController::class, 'index']);
         Route::get('/reports/export', [AdminReportController::class, 'export']);
+        Route::get('/reports/platform', [AdminReportController::class, 'platform']);
+        Route::get('/reports/platform/export', [AdminReportController::class, 'exportPlatform']);
         Route::get('/settings', [AdminSettingsController::class, 'platform']);
         Route::patch('/settings', [AdminSettingsController::class, 'updatePlatform']);
         Route::get('/tenants/pending', [TenantApprovalController::class, 'pending']);
@@ -99,6 +101,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::prefix('tenants')->middleware('workspace.access')->group(function () {
         Route::get('/dashboard', [TenantDashboardController::class, 'index']);
         Route::get('/activities', [ActivityLogController::class, 'tenantIndex']);
+        Route::get('/reports', [AdminReportController::class, 'tenant'])
+            ->middleware('role:tenant_owner,tenant_admin,agency_manager,agency_staff');
+        Route::get('/reports/export', [AdminReportController::class, 'exportTenant'])
+            ->middleware('role:tenant_owner,tenant_admin,agency_manager,agency_staff');
         Route::get('/customers', [TenantCustomerController::class, 'index']);
         Route::get('/settings', [AdminSettingsController::class, 'tenant']);
         Route::patch('/settings', [AdminSettingsController::class, 'updateTenant'])
