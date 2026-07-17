@@ -17,6 +17,8 @@ use App\Services\MailService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class FlightController extends Controller
 {
@@ -30,8 +32,7 @@ class FlightController extends Controller
         DuffelService $duffel,
         CurrencyConverter $currencyConverter,
         ActivityLogger $activityLogger
-    )
-    {
+    ) {
         $this->duffel = $duffel;
         $this->currencyConverter = $currencyConverter;
         $this->activityLogger = $activityLogger;
@@ -324,221 +325,593 @@ class FlightController extends Controller
     {
         try {
             $validated = $request->validate([
-                'tenantKey' => 'required|string',
-                'offer_id' => 'required|string',
-                'passengers' => 'required|array|min:1',
-                'passengers.*.id' => 'required|string',
-                'passengers.*.type' => 'required|string|in:adult,child,infant_without_seat',
-                'passengers.*.title' => 'required|string',
-                'passengers.*.given_name' => 'required|string',
-                'passengers.*.family_name' => 'required|string',
-                'passengers.*.born_on' => 'required|date',
-                'passengers.*.gender' => 'required|string',
-                'passengers.*.email' => 'nullable|email',
-                'passengers.*.phone_number' => 'nullable|string',
-                'passengers.*.loyalty_programme_accounts' => 'nullable|array',
-                'passengers.*.infant_passenger_id' => 'nullable|string',
+                'tenantKey' => [
+                    'required',
+                    'string',
+                    'exists:tenants,key',
+                ],
 
-                // Optional addons
-                'addons' => 'nullable|array',
-                'booking_addons' => 'nullable|array',
-                'booking_addons.*.addon_id' => 'required_with:booking_addons|integer|exists:addons,id',
-                'booking_addons.*.addon_code' => 'required_with:booking_addons|string|max:255',
-                'booking_addons.*.addon_name' => 'required_with:booking_addons|string|max:255',
-                'booking_addons.*.price' => 'required_with:booking_addons|numeric|min:0',
-                'booking_addons.*.currency' => 'required_with:booking_addons|string|size:3',
-                'booking_addons.*.meta' => 'nullable|array',
-                'agency_markup' => 'nullable|array',
-                'agency_markup.enabled' => 'required_with:agency_markup|boolean',
-                'agency_markup.mode' => 'required_with:agency_markup|in:percentage,fixed',
-                'agency_markup.value' => 'required_with:agency_markup|numeric|min:0',
-                'agency_markup.amount' => 'nullable|numeric|min:0',
-                'agency_markup.currency' => 'required_with:agency_markup|string|size:3',
-                'agency_markup.label' => 'nullable|string|max:255',
-                'contact_email' => 'nullable|email',
+                'offer_id' => [
+                    'required',
+                    'string',
+                ],
+
+                'passengers' => [
+                    'required',
+                    'array',
+                    'min:1',
+                ],
+
+                'passengers.*.id' => [
+                    'required',
+                    'string',
+                    'distinct',
+                ],
+
+                'passengers.*.type' => [
+                    'required',
+                    'string',
+                    'in:adult,child,infant_without_seat',
+                ],
+
+                'passengers.*.title' => [
+                    'required',
+                    'string',
+                ],
+
+                'passengers.*.given_name' => [
+                    'required',
+                    'string',
+                ],
+
+                'passengers.*.family_name' => [
+                    'required',
+                    'string',
+                ],
+
+                'passengers.*.born_on' => [
+                    'required',
+                    'date_format:Y-m-d',
+                ],
+
+                'passengers.*.gender' => [
+                    'required',
+                    'string',
+                ],
+
+                'passengers.*.email' => [
+                    'nullable',
+                    'email',
+                ],
+
+                'passengers.*.phone_number' => [
+                    'nullable',
+                    'string',
+                ],
+
+                'passengers.*.loyalty_programme_accounts' => [
+                    'nullable',
+                    'array',
+                ],
+
+                /*
+             * In your frontend, this value belongs to an
+             * infant_without_seat passenger and contains the
+             * Duffel passenger ID of the accompanying adult.
+             */
+                'passengers.*.infant_passenger_id' => [
+                    'nullable',
+                    'string',
+                ],
+
+                /*
+             * Duffel seat services.
+             *
+             * Example:
+             * [
+             *     [
+             *         'id' => 'ase_...',
+             *         'quantity' => 1,
+             *     ],
+             * ]
+             */
+                'services' => [
+                    'nullable',
+                    'array',
+                    'max:50',
+                ],
+
+                'services.*.id' => [
+                    'required',
+                    'string',
+                    'distinct',
+                    'regex:/^ase_/',
+                ],
+
+                'services.*.quantity' => [
+                    'required',
+                    'integer',
+                    'in:1',
+                ],
+
+                // Existing custom order add-ons
+                'addons' => [
+                    'nullable',
+                    'array',
+                ],
+
+                'booking_addons' => [
+                    'nullable',
+                    'array',
+                ],
+
+                'booking_addons.*.addon_id' => [
+                    'required_with:booking_addons',
+                    'integer',
+                    'exists:addons,id',
+                ],
+
+                'booking_addons.*.addon_code' => [
+                    'required_with:booking_addons',
+                    'string',
+                    'max:255',
+                ],
+
+                'booking_addons.*.addon_name' => [
+                    'required_with:booking_addons',
+                    'string',
+                    'max:255',
+                ],
+
+                'booking_addons.*.price' => [
+                    'required_with:booking_addons',
+                    'numeric',
+                    'min:0',
+                ],
+
+                'booking_addons.*.currency' => [
+                    'required_with:booking_addons',
+                    'string',
+                    'size:3',
+                ],
+
+                'booking_addons.*.meta' => [
+                    'nullable',
+                    'array',
+                ],
+
+                'agency_markup' => [
+                    'nullable',
+                    'array',
+                ],
+
+                'agency_markup.enabled' => [
+                    'required_with:agency_markup',
+                    'boolean',
+                ],
+
+                'agency_markup.mode' => [
+                    'required_with:agency_markup',
+                    'in:percentage,fixed',
+                ],
+
+                'agency_markup.value' => [
+                    'required_with:agency_markup',
+                    'numeric',
+                    'min:0',
+                ],
+
+                'agency_markup.amount' => [
+                    'nullable',
+                    'numeric',
+                    'min:0',
+                ],
+
+                'agency_markup.currency' => [
+                    'required_with:agency_markup',
+                    'string',
+                    'size:3',
+                ],
+
+                'agency_markup.label' => [
+                    'nullable',
+                    'string',
+                    'max:255',
+                ],
+
+                'contact_email' => [
+                    'nullable',
+                    'email',
+                ],
             ]);
+
+            /*
+         * Resolve the tenant before calling Duffel.
+         *
+         * A database transaction cannot undo an external
+         * Duffel order if the tenant validation later fails.
+         */
+            $tenant = Tenant::where('key', $validated['tenantKey'])
+                ->firstOrFail();
 
             $authUser = $request->user();
 
             $orderEmail = $validated['contact_email']
-                ?? collect($validated['passengers'])->pluck('email')->filter()->first();
+                ?? collect($validated['passengers'])
+                ->pluck('email')
+                ->filter(
+                    fn($email) =>
+                    is_string($email) &&
+                        trim($email) !== ''
+                )
+                ->first();
 
-            $orderUser = null;
+            $orderUser = $authUser;
 
-            if ($authUser) {
-                $orderUser = $authUser;
-            } elseif ($orderEmail) {
+            if (!$orderUser && $orderEmail) {
                 $orderUser = User::where('email', $orderEmail)->first();
             }
 
-            return DB::transaction(function () use ($validated, $orderUser, $authUser, $request) {
-                $offerResponse = $this->duffel->getOffer($validated['offer_id']);
-                $offer = $offerResponse['data'] ?? null;
+            /*
+         * Your current orders table and email flow expect a user.
+         * Do not continue with a null user.
+         */
+            if (!$orderUser) {
+                throw ValidationException::withMessages([
+                    'contact_email' => [
+                        'A registered or verified customer account is required before creating the booking.',
+                    ],
+                ]);
+            }
 
-                if (!is_array($offer) || empty($offer)) {
-                    return response()->json([
-                        'error' => 'Offer not found',
-                    ], 422);
-                }
+            $recipientEmail = $orderEmail ?: $orderUser->email;
 
-                $duffelPassengers = array_map(
-                    function (array $passenger) {
-                        unset($passenger['infant_passenger_id']);
-                        return $passenger;
-                    },
-                    $validated['passengers']
+            if (!$recipientEmail) {
+                throw ValidationException::withMessages([
+                    'contact_email' => [
+                        'A customer email address is required.',
+                    ],
+                ]);
+            }
+
+            /*
+         * Retrieve the latest raw offer directly from Duffel.
+         * Do not use a frontend copy of the offer price.
+         */
+            $offerResponse = $this->duffel->getOffer(
+                $validated['offer_id']
+            );
+
+            $offer = $offerResponse['data'] ?? null;
+
+            if (!is_array($offer) || empty($offer)) {
+                throw ValidationException::withMessages([
+                    'offer_id' => [
+                        'The selected flight offer could not be found.',
+                    ],
+                ]);
+            }
+
+            $expiresAt = $offer['expires_at'] ?? null;
+
+            if ($expiresAt && Carbon::parse($expiresAt)->isPast()) {
+                throw ValidationException::withMessages([
+                    'offer_id' => [
+                        'The selected flight offer has expired. Please search again.',
+                    ],
+                ]);
+            }
+
+            /*
+         * Move infant_passenger_id to the accompanying adult,
+         * which is the structure expected by Duffel.
+         */
+            $duffelPassengers = $this->prepareDuffelPassengers(
+                $validated['passengers']
+            );
+
+            /*
+         * Refetch the raw seat map, validate the ase_ IDs,
+         * match services to passengers and calculate the
+         * complete Duffel payment amount.
+         */
+            $seatData = $this->prepareSelectedSeatServices(
+                offerId: $validated['offer_id'],
+                requestedServices: $validated['services'] ?? [],
+                passengers: $validated['passengers'],
+                offer: $offer
+            );
+
+            $payload = [
+                'selected_offers' => [
+                    $validated['offer_id'],
+                ],
+
+                'payments' => [
+                    [
+                        'type' => 'balance',
+                        'amount' => $seatData['payment_amount'],
+                        'currency' => $seatData['payment_currency'],
+                    ],
+                ],
+
+                'passengers' => $duffelPassengers,
+            ];
+
+            if (!empty($seatData['duffel_services'])) {
+                $payload['services'] = $seatData['duffel_services'];
+            }
+
+            /*
+         * Prepare existing custom add-on values before the
+         * external order is created.
+         */
+            $convertedOrderAddons = null;
+
+            if (!empty($validated['addons'])) {
+                $convertedOrderAddons =
+                    $this->currencyConverter->convertPayload(
+                        $validated['addons']
+                    );
+            }
+
+            /*
+         * Create the real Duffel order.
+         */
+            $duffelOrderResponse = $this->duffel->createOrder(
+                $payload
+            );
+
+            $duffelOrder = $duffelOrderResponse['data']
+                ?? $duffelOrderResponse;
+
+            if (
+                !is_array($duffelOrder) ||
+                empty($duffelOrder['id'])
+            ) {
+                throw new \RuntimeException(
+                    'Duffel returned an invalid order response.'
+                );
+            }
+
+            /*
+         * Read the confirmed seat assignments from the
+         * created Duffel order.
+         */
+            $confirmedSeatAssignments =
+                $this->extractConfirmedSeatAssignments(
+                    $duffelOrder
                 );
 
-                $adultPassengerIds = [];
-                $infantPassengerIds = [];
-                $infantLinks = [];
-
-                foreach ($validated['passengers'] as $passenger) {
-                    $passengerId = $passenger['id'] ?? null;
-
-                    if (!is_string($passengerId) || $passengerId === '') {
-                        continue;
-                    }
-
-                    if (($passenger['type'] ?? null) === 'adult') {
-                        $adultPassengerIds[] = $passengerId;
-                        continue;
-                    }
-
-                    if (($passenger['type'] ?? null) !== 'infant_without_seat') {
-                        continue;
-                    }
-
-                    $infantPassengerIds[] = $passengerId;
-
-                    $adultId = $passenger['infant_passenger_id'] ?? null;
-                    if (is_string($adultId) && $adultId !== '') {
-                        $infantLinks[$adultId] = $passengerId;
-                    }
-                }
-
-                if (empty($infantLinks) && !empty($adultPassengerIds) && !empty($infantPassengerIds)) {
-                    foreach ($infantPassengerIds as $index => $infantPassengerId) {
-                        $adultPassengerId = $adultPassengerIds[$index] ?? $adultPassengerIds[0];
-
-                        if (is_string($adultPassengerId) && $adultPassengerId !== '') {
-                            $infantLinks[$adultPassengerId] = $infantPassengerId;
-                        }
-                    }
-                }
-
-                foreach ($duffelPassengers as &$passenger) {
-                    $passengerId = $passenger['id'] ?? null;
-                    if (($passenger['type'] ?? null) === 'adult' && is_string($passengerId) && isset($infantLinks[$passengerId])) {
-                        $passenger['infant_passenger_id'] = $infantLinks[$passengerId];
-                    }
-                }
-                unset($passenger);
-
-                $payload = [
-                    'selected_offers' => [$validated['offer_id']],
-                    'payments' => [
-                        [
-                            'type' => 'balance',
-                            'amount' => $offer['total_amount'] ?? null,
-                            'currency' => $offer['total_currency'] ?? null,
-                        ],
-                    ],
-                    'passengers' => $duffelPassengers,
-                ];
-
-                $duffelOrderResponse = $this->duffel->createOrder($payload);
-                $duffelOrder = $duffelOrderResponse['data'] ?? $duffelOrderResponse;
-                logger()->info("stage-1");
-                if (!is_array($duffelOrder) || empty($duffelOrder['id'])) {
-                    throw new \Exception('Invalid Duffel order response');
-                }
-
-                $tenant = Tenant::where('key', $validated['tenantKey'])->first();
-
-                if (!$tenant) {
-                    throw new \Exception('Invalid tenant.');
-                }
-
+            /*
+         * Only local database operations are placed inside
+         * the database transaction.
+         */
+            $order = DB::transaction(function () use (
+                $tenant,
+                $orderUser,
+                $recipientEmail,
+                $offer,
+                $duffelOrder,
+                $validated,
+                $seatData,
+                $confirmedSeatAssignments,
+                $convertedOrderAddons
+            ) {
                 $order = Order::create([
                     'tenant_id' => $tenant->id,
                     'user_id' => $orderUser->id,
 
                     'duffel_order_id' => $duffelOrder['id'],
-                    'booking_reference' => $duffelOrder['booking_reference'] ?? null,
-                    'type' => $duffelOrder['type'] ?? 'instant',
+
+                    'booking_reference' =>
+                    $duffelOrder['booking_reference']
+                        ?? null,
+
+                    'type' => $duffelOrder['type']
+                        ?? 'instant',
+
                     'status' => 'Booked',
-                    'cancellation_status' => Order::CANCELLATION_STATUS_NONE,
+
+                    'cancellation_status' =>
+                    Order::CANCELLATION_STATUS_NONE,
+
                     'refund_status' => null,
 
+                    /*
+                 * Duffel's created order amounts should
+                 * already include the selected seat services.
+                 */
                     'base_amount' => $this->convertMoneyAmount(
-                        $duffelOrder['base_amount'] ?? $offer['base_amount'] ?? null,
-                        $duffelOrder['base_currency'] ?? $offer['base_currency'] ?? null
+                        $duffelOrder['base_amount']
+                            ?? $offer['base_amount']
+                            ?? null,
+                        $duffelOrder['base_currency']
+                            ?? $offer['base_currency']
+                            ?? null
                     ),
+
                     'base_currency' => $this->defaultCurrency(),
 
                     'tax_amount' => $this->convertMoneyAmount(
-                        $duffelOrder['tax_amount'] ?? $offer['tax_amount'] ?? null,
-                        $duffelOrder['tax_currency'] ?? $offer['tax_currency'] ?? null
+                        $duffelOrder['tax_amount']
+                            ?? $offer['tax_amount']
+                            ?? null,
+                        $duffelOrder['tax_currency']
+                            ?? $offer['tax_currency']
+                            ?? null
                     ),
+
                     'tax_currency' => $this->defaultCurrency(),
 
                     'total_amount' => $this->convertMoneyAmount(
-                        $duffelOrder['total_amount'] ?? $offer['total_amount'] ?? null,
-                        $duffelOrder['total_currency'] ?? $offer['total_currency'] ?? null
+                        $duffelOrder['total_amount']
+                            ?? $seatData['payment_amount'],
+                        $duffelOrder['total_currency']
+                            ?? $seatData['payment_currency']
                     ),
+
                     'total_currency' => $this->defaultCurrency(),
 
                     'synced_at' => now(),
-                    'void_window_ends_at' => $duffelOrder['void_window_ends_at'] ?? null,
+
+                    'void_window_ends_at' =>
+                    $duffelOrder['void_window_ends_at']
+                        ?? null,
 
                     'meta' => [
                         'offer' => $offer,
+
                         'duffel_order' => $duffelOrder,
-                        'agency_markup' => $validated['agency_markup'] ?? null,
+
+                        'contact_email' => $recipientEmail,
+
+                        /*
+                     * Seat information derived from the raw
+                     * pre-booking seat map.
+                     */
+                        'seat_selections' =>
+                        $seatData['selections'],
+
+                        /*
+                     * Seat information returned after Duffel
+                     * successfully created the order.
+                     */
+                        'confirmed_seat_assignments' =>
+                        $confirmedSeatAssignments,
+
+                        'provider_payment' => [
+                            'offer_amount' =>
+                            $seatData['offer_amount'],
+
+                            'seat_services_amount' =>
+                            $seatData['service_total_amount'],
+
+                            'total_amount' =>
+                            $seatData['payment_amount'],
+
+                            'currency' =>
+                            $seatData['payment_currency'],
+                        ],
+
+                        'agency_markup' =>
+                        $validated['agency_markup']
+                            ?? null,
                     ],
                 ]);
-                logger()->info("stage-2");
 
-                foreach ($validated['passengers'] as $passengerData) {
+                foreach (
+                    $validated['passengers']
+                    as $passengerData
+                ) {
                     Passenger::create([
                         'tenant_id' => $tenant->id,
                         'order_id' => $order->id,
 
-                        'duffel_passenger_id' => $passengerData['id'] ?? null,
-                        'type' => $passengerData['type'] ?? null,
-                        'title' => $passengerData['title'] ?? null,
-                        'given_name' => $passengerData['given_name'] ?? null,
-                        'family_name' => $passengerData['family_name'] ?? null,
-                        'dob' => $passengerData['born_on'] ?? null,
-                        'gender' => $passengerData['gender'] ?? null,
-                        'email' => $passengerData['email'] ?? null,
-                        'phone_number' => $passengerData['phone_number'] ?? null,
-                        'infant_passenger_id' => $passengerData['infant_passenger_id'] ?? null,
+                        'duffel_passenger_id' =>
+                        $passengerData['id']
+                            ?? null,
+
+                        'type' =>
+                        $passengerData['type']
+                            ?? null,
+
+                        'title' =>
+                        $passengerData['title']
+                            ?? null,
+
+                        'given_name' =>
+                        $passengerData['given_name']
+                            ?? null,
+
+                        'family_name' =>
+                        $passengerData['family_name']
+                            ?? null,
+
+                        'dob' =>
+                        $passengerData['born_on']
+                            ?? null,
+
+                        'gender' =>
+                        $passengerData['gender']
+                            ?? null,
+
+                        'email' =>
+                        $passengerData['email']
+                            ?? null,
+
+                        'phone_number' =>
+                        $passengerData['phone_number']
+                            ?? null,
+
+                        /*
+                     * This keeps your application's original
+                     * infant-to-adult relationship.
+                     */
+                        'infant_passenger_id' =>
+                        $passengerData['infant_passenger_id']
+                            ?? null,
 
                         'meta' => [
-                            'loyalty_programme_accounts' => $passengerData['loyalty_programme_accounts'] ?? null,
+                            'loyalty_programme_accounts' =>
+                            $passengerData['loyalty_programme_accounts'] ?? null,
+
                             'raw_passenger' => $passengerData,
                         ],
                     ]);
                 }
-                logger()->info("stage-3");
 
                 if (!empty($validated['booking_addons'])) {
-                    foreach ($validated['booking_addons'] as $bookingAddon) {
+                    foreach (
+                        $validated['booking_addons']
+                        as $bookingAddon
+                    ) {
                         BookingAddon::create([
                             'tenant_id' => $order->tenant_id,
                             'order_id' => $order->id,
-                            'addon_id' => $bookingAddon['addon_id'],
-                            'addon_code' => $bookingAddon['addon_code'],
-                            'addon_name' => $bookingAddon['addon_name'],
-                            'price' => $this->normalizeDecimal($bookingAddon['price'] ?? null),
-                            'currency' => strtoupper($bookingAddon['currency'] ?? $this->defaultCurrency()),
-                            'meta' => $bookingAddon['meta'] ?? null,
+
+                            'addon_id' =>
+                            $bookingAddon['addon_id'],
+
+                            'addon_code' =>
+                            $bookingAddon['addon_code'],
+
+                            'addon_name' =>
+                            $bookingAddon['addon_name'],
+
+                            'price' => $this->normalizeDecimal(
+                                $bookingAddon['price']
+                                    ?? null
+                            ),
+
+                            'currency' => strtoupper(
+                                $bookingAddon['currency']
+                                    ?? $this->defaultCurrency()
+                            ),
+
+                            'meta' =>
+                            $bookingAddon['meta']
+                                ?? null,
                         ]);
                     }
                 }
 
+                if ($convertedOrderAddons !== null) {
+                    OrderAddon::create(array_merge([
+                        'tenant_id' => $order->tenant_id,
+                        'order_id' => $order->id,
+                        'currency' => $this->defaultCurrency(),
+                    ], $convertedOrderAddons));
+                }
+
+                return $order->load('passengers');
+            });
+
+            /*
+         * Activity logging should not cause a completed
+         * flight booking to be reported as failed.
+         */
+            try {
                 $this->activityLogger->log(
                     action: 'order.created',
                     request: $request,
@@ -550,61 +923,133 @@ class FlightController extends Controller
                     category: 'order',
                     properties: [
                         'order_id' => $order->id,
-                        'duffel_order_id' => $order->duffel_order_id,
-                        'booking_reference' => $order->booking_reference,
+                        'duffel_order_id' =>
+                        $order->duffel_order_id,
+                        'booking_reference' =>
+                        $order->booking_reference,
                         'status' => $order->status,
                         'total_amount' => $order->total_amount,
                         'currency' => $order->total_currency,
+                        'seat_count' => count(
+                            $seatData['selections']
+                        ),
                     ],
                 );
-                logger()->info("stage-4");
-
-                if (!empty($validated['addons'])) {
-                    $addons = $this->currencyConverter->convertPayload($validated['addons']);
-
-                    OrderAddon::create(array_merge([
-                        'tenant_id' => $order->tenant_id,
+            } catch (\Throwable $loggingException) {
+                Log::warning(
+                    'Booking was created, but activity logging failed.',
+                    [
                         'order_id' => $order->id,
-                        'currency' => $this->defaultCurrency(),
-                    ], $addons));
-                }
+                        'message' =>
+                        $loggingException->getMessage(),
+                    ]
+                );
+            }
 
-                $pdf = Pdf::loadView('pdf.order-reference', [
-                    'tenant' => $tenant->name,
-                    'order' => $order->load('passengers'),
-                ]);
+            /*
+         * Email/PDF errors should not make the frontend think
+         * the Duffel order was not created.
+         */
+            $notificationSent = false;
 
-                $htmlBody = view('emails.order-issued', [
-                    'tenant' => $tenant->name,
-                    'name' => $orderUser?->name ?? 'Customer',
-                    'order' => $order,
-                ])->render();
+            try {
+                $pdf = Pdf::loadView(
+                    'pdf.order-reference',
+                    [
+                        'tenant' => $tenant->name,
+                        'order' => $order,
+                    ]
+                );
+
+                $htmlBody = view(
+                    'emails.order-issued',
+                    [
+                        'tenant' => $tenant->name,
+                        'name' => $orderUser->name
+                            ?? 'Customer',
+                        'order' => $order,
+                    ]
+                )->render();
 
                 MailService::sendMail(
-                    $orderUser->email,
+                    $recipientEmail,
                     $tenant->name . ' Booking Confirmation',
                     $htmlBody,
                     $pdf->output(),
-                    'booking-reference-' . $order->booking_reference . '.pdf'
+                    'booking-reference-' .
+                        $order->booking_reference .
+                        '.pdf'
                 );
 
-                return response()->json([
-                    'message' => 'Order created successfully',
-                    'order' => \App\Http\Resources\OrderResource::make($order->load('passengers'))->resolve(),
-                    'duffel_order' => $this->imposeDefaultCurrency($duffelOrder),
-                ]);
-            });
-        } catch (\Illuminate\Validation\ValidationException $e) {
+                $notificationSent = true;
+            } catch (\Throwable $mailException) {
+                Log::warning(
+                    'Booking was created, but confirmation email failed.',
+                    [
+                        'order_id' => $order->id,
+                        'recipient' => $recipientEmail,
+                        'message' =>
+                        $mailException->getMessage(),
+                    ]
+                );
+            }
+
+            return response()->json([
+                'message' => 'Order created successfully',
+
+                'order' =>
+                \App\Http\Resources\OrderResource::make(
+                    $order
+                )->resolve(),
+
+                'duffel_order' =>
+                $this->imposeDefaultCurrency(
+                    $duffelOrder
+                ),
+
+                'seat_selections' =>
+                $this->imposeDefaultCurrency(
+                    $seatData['selections']
+                ),
+
+                'seat_service_total' => [
+                    'amount' =>
+                    $this->convertMoneyAmount(
+                        $seatData['service_total_amount'],
+                        $seatData['payment_currency']
+                    ),
+
+                    'currency' =>
+                    $this->defaultCurrency(),
+                ],
+
+                'notification_sent' => $notificationSent,
+            ], 201);
+        } catch (ValidationException $e) {
             return response()->json([
                 'error' => 'Validation failed',
                 'messages' => $e->errors(),
             ], 422);
         } catch (\Throwable $e) {
-            $status = str_contains($e->getMessage(), '422') ? 422 : 500;
+            $message = $e->getMessage();
+
+            $status = match (true) {
+                str_contains($message, '404') => 404,
+                str_contains($message, '409') => 409,
+                str_contains($message, '422') => 422,
+                default => 500,
+            };
+
+            Log::error('Order creation failed.', [
+                'offer_id' => $request->input('offer_id'),
+                'tenant_key' => $request->input('tenantKey'),
+                'message' => $message,
+                'exception' => get_class($e),
+            ]);
 
             return response()->json([
                 'error' => 'Order creation failed',
-                'message' => $e->getMessage(),
+                'message' => $message,
             ], $status);
         }
     }
@@ -723,7 +1168,7 @@ class FlightController extends Controller
                 $warnings[] = 'This booking is marked as non-refundable, but cancellation can still be requested.';
             }
 
-            $warnings = array_values(array_filter($warnings, fn ($warning) => $warning !== null && $warning !== ''));
+            $warnings = array_values(array_filter($warnings, fn($warning) => $warning !== null && $warning !== ''));
             $quoteSummary['warnings'] = $warnings;
             $quoteSummary['refundability'] = [
                 'is_refundable' => $isRefundable,
@@ -802,7 +1247,7 @@ class FlightController extends Controller
         }
     }
 
-    public function confirmOrderCancellation( Request $request,string $cancellationId, int $orderId)
+    public function confirmOrderCancellation(Request $request, string $cancellationId, int $orderId)
     {
         try {
             $validated = request()->validate([
@@ -1182,7 +1627,7 @@ class FlightController extends Controller
             'meta' => $this->mergeOrderMeta($order, [
                 'change' => array_filter(
                     $attributes,
-                    fn ($value) => $value !== null && $value !== []
+                    fn($value) => $value !== null && $value !== []
                 ),
             ]),
         ])->save();
@@ -1194,7 +1639,7 @@ class FlightController extends Controller
             'meta' => $this->mergeOrderMeta($order, [
                 'cancellation' => array_filter(
                     $attributes,
-                    fn ($value) => $value !== null && $value !== []
+                    fn($value) => $value !== null && $value !== []
                 ),
             ]),
         ])->save();
@@ -1698,7 +2143,7 @@ class FlightController extends Controller
                             'payment_difference' => data_get($data, 'payment_difference'),
                             'refund_amount' => data_get($data, 'refund_amount'),
                             'additional_payment_amount' => data_get($data, 'additional_payment_amount'),
-                        ], fn ($value) => $value !== null && $value !== []),
+                        ], fn($value) => $value !== null && $value !== []),
                     ]),
                 ]);
 
@@ -1755,5 +2200,880 @@ class FlightController extends Controller
                 'message' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    private function prepareDuffelPassengers(
+        array $passengers
+    ): array {
+        $adultIds = [];
+        $infantIds = [];
+
+        foreach ($passengers as $passenger) {
+            $passengerId = $passenger['id'] ?? null;
+            $type = $passenger['type'] ?? null;
+
+            if (
+                !is_string($passengerId) ||
+                trim($passengerId) === ''
+            ) {
+                continue;
+            }
+
+            if ($type === 'adult') {
+                $adultIds[] = $passengerId;
+            }
+
+            if ($type === 'infant_without_seat') {
+                $infantIds[] = $passengerId;
+            }
+        }
+
+        if (count($infantIds) > count($adultIds)) {
+            throw ValidationException::withMessages([
+                'passengers' => [
+                    'Each infant without a seat must be linked to a different adult passenger.',
+                ],
+            ]);
+        }
+
+        /*
+     * Key: adult passenger ID
+     * Value: infant passenger ID
+     */
+        $infantLinks = [];
+        $linkedInfantIds = [];
+        $usedAdultIds = [];
+
+        foreach ($passengers as $passenger) {
+            if (
+                ($passenger['type'] ?? null)
+                !== 'infant_without_seat'
+            ) {
+                continue;
+            }
+
+            $infantId = $passenger['id'] ?? null;
+            $adultId =
+                $passenger['infant_passenger_id']
+                ?? null;
+
+            if (!$adultId) {
+                continue;
+            }
+
+            if (!in_array($adultId, $adultIds, true)) {
+                throw ValidationException::withMessages([
+                    'passengers' => [
+                        "The accompanying adult {$adultId} is not part of the selected offer.",
+                    ],
+                ]);
+            }
+
+            if (isset($usedAdultIds[$adultId])) {
+                throw ValidationException::withMessages([
+                    'passengers' => [
+                        'An adult passenger cannot be assigned to more than one infant without a seat.',
+                    ],
+                ]);
+            }
+
+            $infantLinks[$adultId] = $infantId;
+            $linkedInfantIds[$infantId] = true;
+            $usedAdultIds[$adultId] = true;
+        }
+
+        /*
+     * Automatically connect any unlinked infants to an
+     * available adult.
+     */
+        foreach ($infantIds as $infantId) {
+            if (isset($linkedInfantIds[$infantId])) {
+                continue;
+            }
+
+            $availableAdultId = null;
+
+            foreach ($adultIds as $adultId) {
+                if (!isset($usedAdultIds[$adultId])) {
+                    $availableAdultId = $adultId;
+                    break;
+                }
+            }
+
+            if (!$availableAdultId) {
+                throw ValidationException::withMessages([
+                    'passengers' => [
+                        'No available adult passenger could be assigned to an infant.',
+                    ],
+                ]);
+            }
+
+            $infantLinks[$availableAdultId] = $infantId;
+            $usedAdultIds[$availableAdultId] = true;
+        }
+
+        $duffelPassengers = [];
+
+        foreach ($passengers as $passenger) {
+            /*
+         * The frontend relation is removed from the infant.
+         */
+            unset($passenger['infant_passenger_id']);
+
+            $passengerId = $passenger['id'] ?? null;
+
+            /*
+         * Duffel expects infant_passenger_id on the
+         * accompanying adult passenger.
+         */
+            if (
+                ($passenger['type'] ?? null) === 'adult' &&
+                is_string($passengerId) &&
+                isset($infantLinks[$passengerId])
+            ) {
+                $passenger['infant_passenger_id'] =
+                    $infantLinks[$passengerId];
+            }
+
+            $duffelPassengers[] = $passenger;
+        }
+
+        return $duffelPassengers;
+    }
+
+    private function prepareSelectedSeatServices(
+        string $offerId,
+        array $requestedServices,
+        array $passengers,
+        array $offer
+    ): array {
+        $offerAmount = $this->normalizeProviderAmount(
+            $offer['total_amount'] ?? null
+        );
+
+        $paymentCurrency = strtoupper(
+            trim((string) (
+                $offer['total_currency']
+                ?? ''
+            ))
+        );
+
+        if (
+            !preg_match(
+                '/^[A-Z]{3}$/',
+                $paymentCurrency
+            )
+        ) {
+            throw ValidationException::withMessages([
+                'offer_id' => [
+                    'The selected offer does not contain a valid payment currency.',
+                ],
+            ]);
+        }
+
+        /*
+     * No seats were selected.
+     */
+        if (empty($requestedServices)) {
+            return [
+                'duffel_services' => [],
+                'selections' => [],
+                'offer_amount' => $offerAmount,
+                'service_total_amount' => '0.00',
+                'payment_amount' => $offerAmount,
+                'payment_currency' => $paymentCurrency,
+            ];
+        }
+
+        /*
+     * Always refetch the raw seat map. Do not rely on
+     * frontend prices or seat availability.
+     */
+        $seatMapsResponse = $this->duffel->getSeatMaps(
+            $offerId
+        );
+
+        $serviceIndex = $this->buildSeatServiceIndex(
+            $seatMapsResponse
+        );
+
+        if (empty($serviceIndex)) {
+            throw ValidationException::withMessages([
+                'services' => [
+                    'Seat selection is not available for this flight offer.',
+                ],
+            ]);
+        }
+
+        $passengerTypes = [];
+
+        foreach ($passengers as $passenger) {
+            $passengerId = $passenger['id'] ?? null;
+
+            if (
+                is_string($passengerId) &&
+                trim($passengerId) !== ''
+            ) {
+                $passengerTypes[$passengerId] =
+                    $passenger['type']
+                    ?? null;
+            }
+        }
+
+        $duffelServices = [];
+        $selections = [];
+        $serviceAmounts = [];
+
+        /*
+     * Prevent one passenger selecting multiple seats
+     * for the same segment.
+     */
+        $usedPassengerSegments = [];
+
+        /*
+     * Prevent two passengers selecting the same physical
+     * seat on the same segment.
+     */
+        $usedSegmentSeats = [];
+
+        foreach ($requestedServices as $requestedService) {
+            $serviceId = $requestedService['id'];
+
+            $seatService = $serviceIndex[$serviceId]
+                ?? null;
+
+            if (!$seatService) {
+                throw ValidationException::withMessages([
+                    'services' => [
+                        "Seat service {$serviceId} is unavailable or does not belong to this offer.",
+                    ],
+                ]);
+            }
+
+            $passengerId =
+                $seatService['passenger_id']
+                ?? null;
+
+            if (
+                !$passengerId ||
+                !array_key_exists(
+                    $passengerId,
+                    $passengerTypes
+                )
+            ) {
+                throw ValidationException::withMessages([
+                    'services' => [
+                        "Seat service {$serviceId} does not belong to a passenger in this booking.",
+                    ],
+                ]);
+            }
+
+            if (
+                $passengerTypes[$passengerId]
+                === 'infant_without_seat'
+            ) {
+                throw ValidationException::withMessages([
+                    'services' => [
+                        'An infant without a seat cannot have a seat service.',
+                    ],
+                ]);
+            }
+
+            $segmentId =
+                $seatService['segment_id']
+                ?? null;
+
+            $seatDesignator =
+                $seatService['seat_designator']
+                ?? null;
+
+            if (!$segmentId || !$seatDesignator) {
+                throw ValidationException::withMessages([
+                    'services' => [
+                        "Seat service {$serviceId} does not contain valid segment and seat information.",
+                    ],
+                ]);
+            }
+
+            $serviceCurrency = strtoupper(
+                trim((string) (
+                    $seatService['currency']
+                    ?? ''
+                ))
+            );
+
+            /*
+         * The provider payment cannot safely combine two
+         * unrelated currencies.
+         */
+            if ($serviceCurrency !== $paymentCurrency) {
+                throw ValidationException::withMessages([
+                    'services' => [
+                        "Seat {$seatDesignator} uses {$serviceCurrency}, but the selected offer uses {$paymentCurrency}.",
+                    ],
+                ]);
+            }
+
+            $serviceAmount =
+                $this->normalizeProviderAmount(
+                    $seatService['amount']
+                        ?? null
+                );
+
+            $passengerSegmentKey =
+                $segmentId . ':' . $passengerId;
+
+            if (
+                isset(
+                    $usedPassengerSegments[$passengerSegmentKey]
+                )
+            ) {
+                throw ValidationException::withMessages([
+                    'services' => [
+                        'A passenger can select only one seat for each flight segment.',
+                    ],
+                ]);
+            }
+
+            $segmentSeatKey =
+                $segmentId . ':' . $seatDesignator;
+
+            if (
+                isset(
+                    $usedSegmentSeats[$segmentSeatKey]
+                )
+            ) {
+                throw ValidationException::withMessages([
+                    'services' => [
+                        "Seat {$seatDesignator} was selected by more than one passenger.",
+                    ],
+                ]);
+            }
+
+            $usedPassengerSegments[$passengerSegmentKey] = true;
+
+            $usedSegmentSeats[$segmentSeatKey] = true;
+
+            $duffelServices[] = [
+                'id' => $serviceId,
+                'quantity' => 1,
+            ];
+
+            $selections[] = [
+                'service_id' => $serviceId,
+                'passenger_id' => $passengerId,
+
+                'slice_id' =>
+                $seatService['slice_id']
+                    ?? null,
+
+                'segment_id' => $segmentId,
+
+                'seat_designator' =>
+                $seatDesignator,
+
+                'cabin_class' =>
+                $seatService['cabin_class']
+                    ?? null,
+
+                'amount' => $serviceAmount,
+                'currency' => $serviceCurrency,
+
+                'disclosures' =>
+                $seatService['disclosures']
+                    ?? [],
+            ];
+
+            $serviceAmounts[] = $serviceAmount;
+        }
+
+        $serviceTotalAmount =
+            $this->sumDecimalAmounts(
+                $serviceAmounts
+            );
+
+        $paymentAmount =
+            $this->sumDecimalAmounts([
+                $offerAmount,
+                $serviceTotalAmount,
+            ]);
+
+        return [
+            'duffel_services' => $duffelServices,
+            'selections' => $selections,
+            'offer_amount' => $offerAmount,
+            'service_total_amount' =>
+            $serviceTotalAmount,
+            'payment_amount' => $paymentAmount,
+            'payment_currency' => $paymentCurrency,
+        ];
+    }
+
+    private function buildSeatServiceIndex(
+        array $seatMapsResponse
+    ): array {
+        $serviceIndex = [];
+
+        $seatMaps = data_get(
+            $seatMapsResponse,
+            'data',
+            []
+        );
+
+        if (!is_array($seatMaps)) {
+            return [];
+        }
+
+        foreach ($seatMaps as $seatMap) {
+            if (!is_array($seatMap)) {
+                continue;
+            }
+
+            $sliceId = data_get(
+                $seatMap,
+                'slice_id'
+            );
+
+            $segmentId = data_get(
+                $seatMap,
+                'segment_id'
+            );
+
+            $cabins = data_get(
+                $seatMap,
+                'cabins',
+                []
+            );
+
+            if (!is_array($cabins)) {
+                continue;
+            }
+
+            foreach ($cabins as $cabin) {
+                if (!is_array($cabin)) {
+                    continue;
+                }
+
+                $cabinClass = data_get(
+                    $cabin,
+                    'cabin_class'
+                );
+
+                $rows = data_get(
+                    $cabin,
+                    'rows',
+                    []
+                );
+
+                if (!is_array($rows)) {
+                    continue;
+                }
+
+                foreach ($rows as $row) {
+                    $sections = data_get(
+                        $row,
+                        'sections',
+                        []
+                    );
+
+                    if (!is_array($sections)) {
+                        continue;
+                    }
+
+                    foreach ($sections as $section) {
+                        $elements = data_get(
+                            $section,
+                            'elements',
+                            []
+                        );
+
+                        if (!is_array($elements)) {
+                            continue;
+                        }
+
+                        foreach ($elements as $element) {
+                            if (
+                                data_get(
+                                    $element,
+                                    'type'
+                                ) !== 'seat'
+                            ) {
+                                continue;
+                            }
+
+                            $availableServices =
+                                data_get(
+                                    $element,
+                                    'available_services',
+                                    []
+                                );
+
+                            if (
+                                !is_array(
+                                    $availableServices
+                                )
+                            ) {
+                                continue;
+                            }
+
+                            foreach (
+                                $availableServices
+                                as $service
+                            ) {
+                                if (!is_array($service)) {
+                                    continue;
+                                }
+
+                                $serviceId = data_get(
+                                    $service,
+                                    'id'
+                                );
+
+                                if (
+                                    !is_string($serviceId) ||
+                                    $serviceId === ''
+                                ) {
+                                    continue;
+                                }
+
+                                $serviceIndex[$serviceId] = [
+                                    'id' => $serviceId,
+
+                                    'passenger_id' =>
+                                    data_get(
+                                        $service,
+                                        'passenger_id'
+                                    ),
+
+                                    'slice_id' => $sliceId,
+                                    'segment_id' => $segmentId,
+
+                                    'element_id' =>
+                                    data_get(
+                                        $element,
+                                        'id'
+                                    ),
+
+                                    'seat_designator' =>
+                                    data_get(
+                                        $element,
+                                        'designator'
+                                    ),
+
+                                    'cabin_class' =>
+                                    $cabinClass,
+
+                                    'amount' =>
+                                    data_get(
+                                        $service,
+                                        'total_amount'
+                                    ),
+
+                                    'currency' =>
+                                    data_get(
+                                        $service,
+                                        'total_currency'
+                                    ),
+
+                                    'disclosures' =>
+                                    data_get(
+                                        $element,
+                                        'disclosures',
+                                        []
+                                    ),
+                                ];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return $serviceIndex;
+    }
+
+    private function extractConfirmedSeatAssignments(
+        array $duffelOrder
+    ): array {
+        $assignments = [];
+
+        $slices = data_get(
+            $duffelOrder,
+            'slices',
+            []
+        );
+
+        if (!is_array($slices)) {
+            return [];
+        }
+
+        foreach ($slices as $slice) {
+            $sliceId = data_get(
+                $slice,
+                'id'
+            );
+
+            $segments = data_get(
+                $slice,
+                'segments',
+                []
+            );
+
+            if (!is_array($segments)) {
+                continue;
+            }
+
+            foreach ($segments as $segment) {
+                $segmentId = data_get(
+                    $segment,
+                    'id'
+                );
+
+                $segmentPassengers = data_get(
+                    $segment,
+                    'passengers',
+                    []
+                );
+
+                if (!is_array($segmentPassengers)) {
+                    continue;
+                }
+
+                foreach (
+                    $segmentPassengers
+                    as $segmentPassenger
+                ) {
+                    $seat = data_get(
+                        $segmentPassenger,
+                        'seat'
+                    );
+
+                    if ($seat === null || $seat === '') {
+                        continue;
+                    }
+
+                    $seatDesignator = null;
+
+                    if (is_string($seat)) {
+                        $seatDesignator = $seat;
+                    }
+
+                    if (is_array($seat)) {
+                        $seatDesignator =
+                            data_get(
+                                $seat,
+                                'designator'
+                            )
+                            ?? data_get(
+                                $seat,
+                                'name'
+                            );
+                    }
+
+                    if (!$seatDesignator) {
+                        continue;
+                    }
+
+                    $assignments[] = [
+                        'slice_id' => $sliceId,
+                        'segment_id' => $segmentId,
+
+                        'passenger_id' =>
+                        data_get(
+                            $segmentPassenger,
+                            'passenger_id'
+                        )
+                            ?? data_get(
+                                $segmentPassenger,
+                                'id'
+                            ),
+
+                        'seat_designator' =>
+                        $seatDesignator,
+
+                        'seat' => $seat,
+                    ];
+                }
+            }
+        }
+
+        return $assignments;
+    }
+
+    private function normalizeProviderAmount(
+        mixed $amount
+    ): string {
+        if (
+            !is_string($amount) &&
+            !is_int($amount) &&
+            !is_float($amount)
+        ) {
+            throw new \InvalidArgumentException(
+                'Invalid provider money amount.'
+            );
+        }
+
+        $value = trim((string) $amount);
+
+        if (
+            !preg_match(
+                '/^\d+(?:\.\d+)?$/',
+                $value
+            )
+        ) {
+            throw new \InvalidArgumentException(
+                "Invalid provider money amount: {$value}"
+            );
+        }
+
+        [$whole, $fraction] = array_pad(
+            explode('.', $value, 2),
+            2,
+            ''
+        );
+
+        $whole = ltrim($whole, '0');
+
+        if ($whole === '') {
+            $whole = '0';
+        }
+
+        if ($fraction === '') {
+            return $whole;
+        }
+
+        return $whole . '.' . $fraction;
+    }
+
+    private function sumDecimalAmounts(
+        array $amounts
+    ): string {
+        if (empty($amounts)) {
+            return '0.00';
+        }
+
+        $normalizedAmounts = [];
+        $scale = 0;
+
+        foreach ($amounts as $amount) {
+            $normalized =
+                $this->normalizeProviderAmount(
+                    $amount
+                );
+
+            $normalizedAmounts[] = $normalized;
+
+            $decimalPosition = strpos(
+                $normalized,
+                '.'
+            );
+
+            $currentScale = $decimalPosition === false
+                ? 0
+                : strlen($normalized)
+                - $decimalPosition
+                - 1;
+
+            $scale = max($scale, $currentScale);
+        }
+
+        $totalUnits = '0';
+
+        foreach (
+            $normalizedAmounts
+            as $normalized
+        ) {
+            [$whole, $fraction] = array_pad(
+                explode('.', $normalized, 2),
+                2,
+                ''
+            );
+
+            $fraction = str_pad(
+                $fraction,
+                $scale,
+                '0',
+                STR_PAD_RIGHT
+            );
+
+            $units = ltrim(
+                $whole . $fraction,
+                '0'
+            );
+
+            if ($units === '') {
+                $units = '0';
+            }
+
+            $totalUnits =
+                $this->addUnsignedIntegerStrings(
+                    $totalUnits,
+                    $units
+                );
+        }
+
+        if ($scale === 0) {
+            return $totalUnits;
+        }
+
+        $totalUnits = str_pad(
+            $totalUnits,
+            $scale + 1,
+            '0',
+            STR_PAD_LEFT
+        );
+
+        return substr(
+            $totalUnits,
+            0,
+            -$scale
+        ) . '.' . substr(
+            $totalUnits,
+            -$scale
+        );
+    }
+
+    private function addUnsignedIntegerStrings(
+        string $left,
+        string $right
+    ): string {
+        $leftIndex = strlen($left) - 1;
+        $rightIndex = strlen($right) - 1;
+
+        $carry = 0;
+        $result = '';
+
+        while (
+            $leftIndex >= 0 ||
+            $rightIndex >= 0 ||
+            $carry > 0
+        ) {
+            $leftDigit = $leftIndex >= 0
+                ? (int) $left[$leftIndex]
+                : 0;
+
+            $rightDigit = $rightIndex >= 0
+                ? (int) $right[$rightIndex]
+                : 0;
+
+            $sum = $leftDigit
+                + $rightDigit
+                + $carry;
+
+            $result =
+                (string) ($sum % 10)
+                . $result;
+
+            $carry = intdiv($sum, 10);
+
+            $leftIndex--;
+            $rightIndex--;
+        }
+
+        $result = ltrim($result, '0');
+
+        return $result === ''
+            ? '0'
+            : $result;
     }
 }
